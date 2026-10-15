@@ -206,6 +206,15 @@ function openDatabase(dbPath) {
   // sustained minute after minute on SD-card boat hardware — for that
   // small window is the right default. FULL would fsync every commit.
   db.exec("PRAGMA synchronous = NORMAL");
+  // Bound the WAL's write bursts: the default auto-checkpoint threshold
+  // is 1000 pages (4 MB), so every WAL generation ends in a single ~4 MB
+  // copy back into the main database — a periodic flash-write spike on
+  // SD-card boat hardware. 256 pages (1 MB) spreads the same bytes over
+  // four smaller bursts, and journal_size_limit lets the WAL file shrink
+  // back to 1 MB after each checkpoint instead of parking forever at its
+  // high-water size (observed at ~4 MB on production stores).
+  db.exec("PRAGMA wal_autocheckpoint = 256");
+  db.exec("PRAGMA journal_size_limit = 1048576");
   db.exec("PRAGMA foreign_keys = ON");
   for (const stmt of SCHEMA_DDL) {
     db.exec(stmt);
@@ -351,17 +360,33 @@ function getState(db, key) {
 /**
  * Writes a scalar value to `dr_state_store`, upserting.
  *
+ * Identical values are not written: the periodic state flush rewrites
+ * the same scalars every cycle (log totals, origin error, trip state),
+ * and on SD-card boat hardware even a no-op upsert dirties a 4 kB page
+ * in the WAL, so suppressing unchanged writes is the single biggest
+ * flash-wear lever this store has. `updated_at` then stays at the
+ * value's last real change, which is the truthful reading of the
+ * column anyway. Column reads elsewhere only consume `value`.
+ *
  * @param {import("node:sqlite").DatabaseSync} db
  * @param {string} key
  * @param {string} value
- * @returns {void}
+ * @returns {boolean} True when a write happened, false when the stored
+ *   value was already identical.
  */
 function setState(db, key, value) {
+  const existing = db
+    .prepare("SELECT value FROM dr_state_store WHERE key = ?")
+    .get(key);
+  if (existing && existing.value === value) {
+    return false;
+  }
   db.prepare(
     `INSERT INTO dr_state_store (key, value, updated_at)
      VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(key, value, new Date().toISOString());
+  return true;
 }
 
 /**

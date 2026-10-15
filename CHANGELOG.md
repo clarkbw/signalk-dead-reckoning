@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The state flush no longer writes rows that did not change, and WAL checkpoint bursts are bounded** (`plugin/db.js`; found by file-activity profiling of a boat server, which showed the DR store's WAL parked at the 4 MB auto-checkpoint high-water and ~40 MB/day of flash writes at the 60 s flush cadence): `setState()` now reads the stored value and skips the write when it is identical — while anchored most flush scalars (`dr_log_nm`, `dr_trip_log_nm`, `dr_trip_start_ms`, `dr_log_since_origin`, `dr_underway_since_origin_s`, `dr_origin_error_nm`) are unchanged, so each flush previously dirtied a 4 kB WAL page per row for nothing; suppressing no-op upserts cuts the anchored flush to the rows that genuinely move (`last_known_good_fix`, whose fix timestamp advances, and `dr_elapsed_since_origin_s`, the wall-clock cone input). `updated_at` then stays at the value's last real change, which is the truthful reading of the column; nothing in the codebase reads it. The database also opens with `PRAGMA wal_autocheckpoint = 256` and `PRAGMA journal_size_limit = 1048576`: the default 1000-page (4 MB) threshold turned every WAL generation into a single ~4 MB copy-back burst on SD-card hardware, and the WAL file parked at its high-water size forever — the same bytes now flow as four 1 MB bursts and the file shrinks back between checkpoints.
+
 ## [0.13.2] - 2026-10-11
 
 ### Fixed

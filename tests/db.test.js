@@ -243,6 +243,39 @@ test("setState upserts and getState reads back", () => {
   db.close();
 });
 
+test("setState skips identical values (flash-wear guard)", () => {
+  const db = openDatabase(join(tempDir, "c.sqlite"));
+  assert.strictEqual(setState(db, "dr_log_nm", "123.45"), true);
+  const firstUpdatedAt = db
+    .prepare("SELECT updated_at FROM dr_state_store WHERE key = ?")
+    .get("dr_log_nm").updated_at;
+  // Identical write is suppressed: no updated_at churn, no WAL page dirtied
+  assert.strictEqual(setState(db, "dr_log_nm", "123.45"), false);
+  assert.strictEqual(
+    db
+      .prepare("SELECT updated_at FROM dr_state_store WHERE key = ?")
+      .get("dr_log_nm").updated_at,
+    firstUpdatedAt,
+  );
+  // A changed value still writes
+  assert.strictEqual(setState(db, "dr_log_nm", "124.00"), true);
+  assert.strictEqual(getState(db, "dr_log_nm"), "124.00");
+  db.close();
+});
+
+test("openDatabase bounds WAL checkpoint bursts and file high-water", () => {
+  const db = openDatabase(join(tempDir, "c.sqlite"));
+  assert.strictEqual(
+    db.prepare("PRAGMA wal_autocheckpoint").get()["wal_autocheckpoint"],
+    256,
+  );
+  assert.strictEqual(
+    db.prepare("PRAGMA journal_size_limit").get()["journal_size_limit"],
+    1048576,
+  );
+  db.close();
+});
+
 test("dr_matrix_bins primary key enforces bin-level uniqueness", () => {
   const db = openDatabase(join(tempDir, "d.sqlite"));
   const ins = db.prepare(
