@@ -39,7 +39,7 @@ test("stopwatchToIso: minutes may exceed an hour and cross date lines", () => {
   assert.equal(vm.stopwatchToIso(800, 0, NOW), "2026-08-29T22:40:00.000Z");
 });
 
-test("sight panel: all three forms carry the stopwatch entry", () => {
+test("sight panel: every form carries the stopwatch entry", () => {
   const src = readFileSync(
     fileURLToPath(new URL("../public/dr-sight-panel.js", import.meta.url)),
     { encoding: "utf8" },
@@ -52,8 +52,8 @@ test("sight panel: all three forms carry the stopwatch entry", () => {
     const count = src.split(field).length - 1;
     assert.equal(
       count,
-      3,
-      `${field} should appear once per form (bearing/vertical/celestial)`,
+      4,
+      `${field} should appear once per form (bearing/vertical/radar/celestial)`,
     );
   }
 });

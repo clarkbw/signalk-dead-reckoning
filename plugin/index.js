@@ -88,6 +88,7 @@ const {
   confirmFix,
   evaluateObservationPlausibility,
   fixSanityCapNm,
+  radarRangeUncertaintyNm,
 } = require("./fix-pipeline.js");
 const { reduceSight, reduceNoonSight } = require("./celestial.js");
 const starAlmanac = require("./star-almanac.js");
@@ -377,6 +378,15 @@ const DEFAULT_CONFIG = {
    */
   fixes: {
     maxDisplacementNm: 100,
+    /**
+     * Radar-range error model (work doc #33): consumer radar range
+     * accuracy is ~1% of range plus display/marker resolution; the
+     * default uncertainty for a `radar-range` CPL is the larger of
+     * `radarRangeErrorPct`% of the range and `radarRangeErrorFloorM`
+     * metres.
+     */
+    radarRangeErrorPct: 1.5,
+    radarRangeErrorFloorM: 20,
   },
   weatherCurrent: {
     enabled: true,
@@ -414,6 +424,7 @@ const deps = {
   confirmFix,
   evaluateObservationPlausibility,
   fixSanityCapNm,
+  radarRangeUncertaintyNm,
   computeRadius,
   createDivergenceState,
   divergenceTick,
@@ -831,6 +842,24 @@ module.exports = (app) => {
           type: "string",
           title: "Shadow vessel label",
           default: DEFAULT_CONFIG.shadowVessel.name,
+        },
+        "fixes.radarRangeErrorPct": {
+          type: "number",
+          title: "Radar range error (% of range)",
+          description:
+            "Default uncertainty radius for a radar-range observation: this percentage of the measured range, or the absolute floor below — whichever is larger. Consumer radar range accuracy is typically ~1%.",
+          minimum: 0,
+          maximum: 20,
+          default: DEFAULT_CONFIG.fixes.radarRangeErrorPct,
+        },
+        "fixes.radarRangeErrorFloorM": {
+          type: "integer",
+          title: "Radar range error floor (m)",
+          description:
+            "Absolute floor for the radar-range uncertainty: at short ranges the percentage term collapses below what marker resolution on the display supports.",
+          minimum: 0,
+          maximum: 500,
+          default: DEFAULT_CONFIG.fixes.radarRangeErrorFloorM,
         },
       },
     },
@@ -2919,7 +2948,17 @@ module.exports = (app) => {
         center_lat: b.center_lat,
         center_lon: b.center_lon,
         radius_nm: b.radius_nm,
-        radius_uncertainty_nm: b.radius_uncertainty_nm ?? null,
+        radius_uncertainty_nm:
+          b.radius_uncertainty_nm ??
+          // Radar ranges carry a range-proportional error model (work
+          // doc #33) — applied as the default when the client doesn't
+          // send its own estimate.
+          (b.cpl_type === "radar-range"
+            ? deps.radarRangeUncertaintyNm(b.radius_nm, {
+                errorPct: config.fixes.radarRangeErrorPct,
+                floorM: config.fixes.radarRangeErrorFloorM,
+              })
+            : null),
         source_object: b.source_object ?? null,
         confirmed_by: b.confirmed_by ?? null,
         // Raw inputs (schema v2) for backtesting.
@@ -2929,7 +2968,7 @@ module.exports = (app) => {
       const obsBy = b.confirmed_by || usernameFromCookies(req.cookies) || null;
       writeLogbookEntry(
         deps.composeObservationEntry({
-          kind: "vertical",
+          kind: b.cpl_type === "radar-range" ? "radar" : "vertical",
           datetime: b.timestamp ?? new Date().toISOString(),
           body_or_object: b.source_object ?? null,
           confirmed_by: obsBy,

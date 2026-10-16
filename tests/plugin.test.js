@@ -4620,3 +4620,63 @@ test("tick prefers the priority-filtered tree position over raw deltas (phantom-
   );
   plugin.stop();
 });
+
+test("POST /fix/cpl: radar range gets the range-proportional uncertainty default", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dr-radar-cpl-"));
+  const app = new FakeSignalKApp();
+  app.dataPath = dir;
+  const plugin = makePlugin(app);
+  plugin.start({});
+  const router = new FakeRouter();
+  plugin.registerWithRouter(router);
+  // 4 nm at the default 1.5% → 0.06 nm uncertainty (percentage term
+  // dominates the 20 m floor).
+  const { status, body } = router.invoke("post", "/fix/cpl", {
+    cpl_type: "radar-range",
+    center_lat: 60,
+    center_lon: 24,
+    radius_nm: 4,
+    source_object: "Cape Rocks",
+  });
+  assert.strictEqual(status, 200);
+  plugin.stop();
+  const db = new DatabaseSync(join(dir, "dead-reckoning.sqlite"), {
+    readOnly: true,
+  });
+  const row = db
+    .prepare("SELECT * FROM circular_position_lines WHERE cpl_id = ?")
+    .get(body.cpl_id);
+  assert.strictEqual(row.cpl_type, "radar-range");
+  assert.strictEqual(row.radius_nm, 4);
+  assert.strictEqual(row.radius_uncertainty_nm, 0.06);
+  db.close();
+  // A client-supplied uncertainty is preserved, not overwritten.
+  const dir2 = await mkdtemp(join(tmpdir(), "dr-radar-cpl2-"));
+  const app2 = new FakeSignalKApp();
+  app2.dataPath = dir2;
+  const plugin2 = makePlugin(app2);
+  plugin2.start({});
+  const router2 = new FakeRouter();
+  plugin2.registerWithRouter(router2);
+  const res2 = router2.invoke("post", "/fix/cpl", {
+    cpl_type: "radar-range",
+    center_lat: 60,
+    center_lon: 24,
+    radius_nm: 4,
+    radius_uncertainty_nm: 0.2,
+  });
+  assert.strictEqual(res2.status, 200);
+  plugin2.stop();
+  const db2 = new DatabaseSync(join(dir2, "dead-reckoning.sqlite"), {
+    readOnly: true,
+  });
+  const row2 = db2
+    .prepare(
+      "SELECT radius_uncertainty_nm FROM circular_position_lines WHERE cpl_id = ?",
+    )
+    .get(res2.body.cpl_id);
+  assert.strictEqual(row2.radius_uncertainty_nm, 0.2);
+  db2.close();
+  await rm(dir, { recursive: true, force: true });
+  await rm(dir2, { recursive: true, force: true });
+});

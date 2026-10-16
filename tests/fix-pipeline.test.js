@@ -904,3 +904,28 @@ test("fixSanityCapNm: flat cap when fresh, grows with under-way time", () => {
   assert.strictEqual(fixSanityCapNm(100, -5), 100);
   assert.strictEqual(fixSanityCapNm(100, Number.NaN), 100);
 });
+
+test("radarRangeUncertaintyNm: percentage of range with an absolute floor", () => {
+  const { radarRangeUncertaintyNm } = require("../plugin/fix-pipeline.js");
+  // 4 nm at the default 1.5% → 0.06 nm (percentage term dominates).
+  assert.strictEqual(radarRangeUncertaintyNm(4), 0.06);
+  // 0.5 nm at 1.5% → 0.0075 nm, below the 20 m floor (0.0108… nm).
+  const floor = 20 / 1852;
+  assert.strictEqual(radarRangeUncertaintyNm(0.5), floor);
+  // Exactly at the crossover: 20 m is 1.5% of ~0.7166 nm.
+  const cross = 20 / 1852 / 0.015;
+  assert.strictEqual(radarRangeUncertaintyNm(cross), floor);
+  // Configurable percentage and floor.
+  assert.strictEqual(
+    radarRangeUncertaintyNm(4, { errorPct: 1, floorM: 10 }),
+    0.04,
+  );
+  assert.strictEqual(
+    radarRangeUncertaintyNm(0.2, { errorPct: 1, floorM: 10 }),
+    10 / 1852,
+  );
+  // Degenerate range → floor.
+  assert.strictEqual(radarRangeUncertaintyNm(0), floor);
+  assert.strictEqual(radarRangeUncertaintyNm(Number.NaN), floor);
+  assert.strictEqual(radarRangeUncertaintyNm(-3), floor);
+});

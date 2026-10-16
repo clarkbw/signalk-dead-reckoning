@@ -97,3 +97,60 @@ test("current panel: Enter submits the override, not the destructive clear", () 
   // Clear stays a plain button — Enter must never fire it.
   assert.match(currentSrc, /type="button" class="danger" id="clear-btn"/);
 });
+
+test("sight panel: radar tab is a real novalidate form on the shared submit path", () => {
+  // The radar entry (work doc #33) rides the same single-path submit
+  // machinery as the other three modes.
+  assert.match(
+    sightSrc,
+    /<form class="form" id="form-radar"[^>]*novalidate/,
+    "radar form is novalidate like its siblings",
+  );
+  assert.match(
+    sightSrc,
+    /data-submit="radar">Add radar range</,
+    "radar form has a real submit button",
+  );
+  assert.match(
+    sightSrc,
+    /<button data-tab="radar">Radar</,
+    "radar tab present in the tab strip",
+  );
+  // Required range input, so requiredMissing() covers it.
+  assert.match(
+    sightSrc,
+    /name="range_nm"[^>]*required/,
+    "radar range is a required field",
+  );
+});
+
+test("sight panel: radar ranges parse the center coordinate prefix", () => {
+  // The radar form's object-position fieldset is data-prefix="center"
+  // (same fieldset id space as the vertical-angle form) —
+  // parseFormCoords must route the radar mode there.
+  assert.match(
+    sightSrc,
+    /mode === "vertical" \|\| mode === "radar"\s*\n\s*\? "center"/,
+    "radar mode parses the center prefix",
+  );
+});
+
+test("sight panel: bearing form carries the instrument selector", () => {
+  // Provenance selector (work doc #33): hand compass vs radar.
+  assert.match(
+    sightSrc,
+    /name="bearing_instrument"/,
+    "instrument select present",
+  );
+  assert.match(sightSrc, /<option value="hand">hand compass<\/option>/);
+  assert.match(sightSrc, /<option value="radar">radar<\/option>/);
+});
+
+test("map view: pick menu offers the radar range entry", () => {
+  const mapSrc = read("dr-map-view.js");
+  assert.match(
+    mapSrc,
+    /` Radar range at \$\{what\}`, mode: "radar"/,
+    "radar range in the pick menu alongside bearing and distance CPL",
+  );
+});

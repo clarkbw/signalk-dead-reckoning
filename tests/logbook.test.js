@@ -427,3 +427,18 @@ test("composeObservationEntry: intercept away when negative", () => {
   });
   assert.match(body.text, /intercept 1\.20 NM away/);
 });
+
+test("composeObservationEntry: radar range names the object and the range", () => {
+  const body = composeObservationEntry({
+    kind: "radar",
+    datetime: "2026-01-01T12:00:00Z",
+    body_or_object: "Cape Rocks",
+    latitude: 60,
+    longitude: 24,
+    radius_nm: 4.2,
+  });
+  assert.strictEqual(body.category, "navigation");
+  assert.strictEqual(body.origin, "agent");
+  assert.match(body.text, /Cape Rocks radar range 4\.2 NM/);
+  assert.strictEqual(pv1(body, "navigation.position").source, "DR");
+});

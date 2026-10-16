@@ -562,7 +562,10 @@ const RAY_TOLERANCE_M = 100;
  * the line is equally valid.
  *
  * @param {object} obs - resolver-shaped LOP observation (needs
- *   `lop_type`, `assumed_lat/lon`, `azimuth_true`)
+ *   `lop_type`, `assumed_lat/lon`, `azimuth_true`). Bearings to known
+ *   objects are ray-constrained — `bearing` (hand-bearing compass) and
+ *   `radar-bearing` (radar heading-marked bearing, work doc #33) alike:
+ *   same geometry, different instrument.
  * @param {{latitude:number, longitude:number}} projectionCenter
  * @param {{x:number, y:number}} p - candidate point, local plane
  * @param {number} [toleranceM=RAY_TOLERANCE_M] along-ray slack
@@ -570,7 +573,8 @@ const RAY_TOLERANCE_M = 100;
  *   the observation is not a bearing — no constraint)
  */
 function onObserverRay(obs, projectionCenter, p, toleranceM = RAY_TOLERANCE_M) {
-  if (obs.lop_type !== "bearing") return true;
+  if (obs.lop_type !== "bearing" && obs.lop_type !== "radar-bearing")
+    return true;
   const anchor = projectToLocal(projectionCenter, {
     latitude: obs.assumed_lat,
     longitude: obs.assumed_lon,

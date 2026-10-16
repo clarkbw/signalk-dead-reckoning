@@ -1088,6 +1088,11 @@ class DrMapView extends HTMLElement {
       : [
           { label: ` Bearing to ${what}`, mode: "bearing" },
           { label: ` Distance CPL at ${what}`, mode: "vertical" },
+          // Radar range (work doc #33): the GNSS-independent range
+          // instrument — a radar range to a charted object, or to an
+          // AIS target (whose position is itself GNSS-derived; the
+          // radar form's note says so).
+          { label: ` Radar range at ${what}`, mode: "radar" },
           { label: " Measure from here…", mode: "_measure" },
           { label: " New note at…", mode: "_note" },
         ];

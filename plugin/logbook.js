@@ -329,17 +329,17 @@ function composeTackEntry(t) {
 
 /**
  * Composes a `NewEntry`-shaped body for a standalone observation
- * (SPEC §9.5): a bearing LOP, a vertical-angle CPL, or a celestial
- * sight. Logged when the observation is recorded — independent of
- * whether it ever resolves into a fix — because taking the sight is
- * itself a navigational event. The vessel's position (DR at the time
- * of the sight) rides the `navigation.position` telemetry pathvalue —
- * the logbook UI renders it separately, so it stays out of `text`;
- * `text` carries only what was observed (object, bearing/radius/
- * reduction).
+ * (SPEC §9.5): a bearing LOP, a vertical-angle CPL, a radar range
+ * (work doc #33), or a celestial sight. Logged when the observation
+ * is recorded — independent of whether it ever resolves into a fix —
+ * because taking the sight is itself a navigational event. The
+ * vessel's position (DR at the time of the sight) rides the
+ * `navigation.position` telemetry pathvalue — the logbook UI renders
+ * it separately, so it stays out of `text`; `text` carries only what
+ * was observed (object, bearing/radius/reduction).
  *
  * @param {object} o
- * @param {"bearing"|"vertical"|"celestial"} o.kind
+ * @param {"bearing"|"vertical"|"radar"|"celestial"} o.kind
  * @param {string} [o.body_or_object] - body name (celestial) or object label
  * @param {string} o.datetime - ISO timestamp
  * @param {string|null} [o.confirmed_by] - watchkeeper (author)
@@ -372,6 +372,11 @@ function composeObservationEntry(o) {
       ? ` ${o.radius_nm.toFixed(1)} NM`
       : "";
     text = `${o.body_or_object ?? "object"} CPL${r}`;
+  } else if (o.kind === "radar") {
+    const r = Number.isFinite(o.radius_nm)
+      ? ` ${o.radius_nm.toFixed(1)} NM`
+      : "";
+    text = `${o.body_or_object ?? "object"} radar range${r}`;
   } else {
     // The observed angle is the event — a bearing entry without it
     // isn't navigable after the fact. Zero-padded like the tack text;

@@ -1,10 +1,12 @@
 /**
  * `<dr-sight-panel>` — interactive observation entry (SPEC §14.1 "Manual
- * LOP & Sight Input"). Three input modes share a single panel:
+ * LOP & Sight Input"). Four input modes share a single panel:
  *
- *   1. Compass bearing → LOP (passes through the observer)
+ *   1. Compass bearing → LOP (passes through the observer; instrument
+ *      selectable hand-bearing compass / radar, work doc #33)
  *   2. Vertical-angle sight → CPL (distance to object of known height)
- *   3. Celestial sight → LOP via Marcq St. Hilaire (POST /celestial/sight)
+ *   3. Radar range → CPL (distance to an object of known position)
+ *   4. Celestial sight → LOP via Marcq St. Hilaire (POST /celestial/sight)
  *
  * Submitted observations collect in a "pending" list; "Resolve" previews
  * a candidate fix, "Confirm" snaps the DR origin. `confirmed_by` is
@@ -130,6 +132,11 @@ template.innerHTML = /* html */ `
       color: var(--color-orange);
       font-family: ui-monospace, "Fira Code", monospace;
     }
+    .instrument-note {
+      margin: 0.25rem 0 0.5rem;
+      font-size: 0.75rem;
+      color: var(--color-dim, #8aa0a8);
+    }
     .reduction {
       margin-top: 0.5rem;
       padding: 0.6rem;
@@ -152,6 +159,7 @@ template.innerHTML = /* html */ `
     <div class="tabs">
       <button data-tab="bearing" class="active">Bearing</button>
       <button data-tab="vertical">Vert. Angle</button>
+      <button data-tab="radar">Radar</button>
       <button data-tab="celestial">Celestial</button>
     </div>
 
@@ -167,6 +175,12 @@ template.innerHTML = /* html */ `
           <select name="bearing_ref">
             <option value="mag">mag</option>
             <option value="true">true</option>
+          </select>
+        </label>
+        <label title="Which instrument supplied the bearing — recorded as provenance on the LOP (work doc #33)">
+          <select name="bearing_instrument" title="Instrument">
+            <option value="hand">hand compass</option>
+            <option value="radar">radar</option>
           </select>
         </label>
         <label class="ref-mag-only" title="Local magnetic variation — auto-filled from navigation.magneticVariation when the server provides it" hidden>
@@ -268,6 +282,55 @@ template.innerHTML = /* html */ `
       </fieldset>
       <div class="actions">
         <button type="submit" class="primary" data-submit="vertical">Add distance CPL</button>
+      </div>
+    </form>
+
+    <form class="form" id="form-radar" hidden novalidate>
+      <label>Object
+        <input name="object" placeholder="lighthouse, point, target…" />
+      </label>
+      <div class="row">
+        <label title="Range as read off the radar display">
+          Range (nm)
+          <input name="range_nm" type="number" step="0.01" min="0" required />
+        </label>
+      </div>
+      <p class="instrument-note" title="The AIS-target caveat (work doc #33): a target's position is itself GNSS-derived — under suspected spoofing or jamming, prefer charted fixed objects">
+        A radar range to a charted object is GNSS-independent. A range to an AIS target rests on the target's reported position.
+      </p>
+      <div class="sight-time">
+        <label>Sight time
+          <input name="sight_time" type="datetime-local" step="1" required />
+        </label>
+        <label class="tz-toggle" title="Switch between local time and UTC">
+          <select name="sight_tz">
+            <option value="local">local</option>
+            <option value="utc">UTC</option>
+          </select>
+        </label>
+        <label class="ago-toggle" title="Stopwatch method: start a watch at the sight, then enter the minutes/seconds elapsed — converted to clock time as you type">
+          <select name="sight_time_mode">
+            <option value="clock">clock</option>
+            <option value="ago">ago</option>
+          </select>
+        </label>
+      </div>
+      <div class="sight-ago" hidden>
+        <label>Min ago
+          <input name="sight_ago_min" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
+        </label>
+        <label>Sec ago
+          <input name="sight_ago_sec" type="number" min="0" step="0.1" inputmode="numeric" placeholder="0" />
+        </label>
+        <span class="ago-note">converted on entry</span>
+      </div>
+      <fieldset class="coord" data-prefix="center">
+        <legend>Object position</legend>
+        <div class="coord-lat"></div>
+        <div class="coord-lon"></div>
+      </fieldset>
+      <div class="actions">
+        <button type="submit" class="primary" data-submit="radar">Add radar range</button>
       </div>
     </form>
 
@@ -754,14 +817,14 @@ class DrSightPanel extends HTMLElement {
    *
    * @param {number} lat
    * @param {number} lon
-   * @param {"bearing"|"vertical"} mode
+   * @param {"bearing"|"vertical"|"radar"} mode
    * @param {string} [label] - charted name / AIS target name, if any
    * @param {number} [tMs] - pick instant the position is valid for
    * @returns {void}
    */
   seedObjectPosition(lat, lon, mode, label, tMs = null) {
-    const prefix = mode === "vertical" ? "center" : "object";
-    const tab = mode === "vertical" ? "vertical" : "bearing";
+    const prefix = mode === "bearing" ? "object" : "center";
+    const tab = mode === "bearing" ? "bearing" : mode;
     this.switchTab(tab);
     const form = this.shadowRoot.querySelector(`#form-${tab}`);
     const fs = this.shadowRoot.querySelector(
@@ -848,7 +911,7 @@ class DrSightPanel extends HTMLElement {
    * Reads a form by mode name, builds the REST body via the view-model,
    * submits, and on success records the returned id.
    *
-   * @param {"bearing"|"vertical"|"celestial"} mode
+   * @param {"bearing"|"vertical"|"radar"|"celestial"} mode
    * @returns {Promise<void>}
    */
   async submit(mode) {
@@ -885,6 +948,9 @@ class DrSightPanel extends HTMLElement {
       } else if (mode === "vertical") {
         path = "/fix/cpl";
         body = vm.verticalAngleCplBody(data);
+      } else if (mode === "radar") {
+        path = "/fix/cpl";
+        body = vm.radarRangeCplBody(data);
       } else {
         path = "/celestial/sight";
         body = vm.celestialSightBody(data);
@@ -953,13 +1019,16 @@ class DrSightPanel extends HTMLElement {
    * Builds the PUT body for an edit-mode submit, or null (with an
    * error shown) when this record can't be edited in the forms.
    *
-   * @param {"bearing"|"vertical"|"celestial"} mode
+   * @param {"bearing"|"vertical"|"radar"|"celestial"} mode
    * @param {Record<string,string>} data - parsed form data
    * @returns {object|null}
    */
   editBody(mode, data) {
     if (this.editing.kind === "lop") {
-      if (this.editing.type !== "bearing" || mode !== "bearing") {
+      if (
+        this.editing.type !== "bearing" &&
+        this.editing.type !== "radar-bearing"
+      ) {
         this.showError(
           "Only bearing LOPs are editable in this form — celestial LOPs must be deleted and re-reduced",
         );
@@ -988,8 +1057,23 @@ class DrSightPanel extends HTMLElement {
       };
     }
     // CPL edit: object + center always; radius only when the user
-    // re-entered a height/angle pair (a radius can't round-trip into
-    // those two fields).
+    // re-entered the distance source for the type — a height/angle
+    // pair for a vertical-angle CPL, a range for a radar-range CPL
+    // (a radius can't round-trip into the other type's fields).
+    if (this.editing.type === "radar-range") {
+      if (mode !== "radar") {
+        this.showError("Switch to the radar tab to edit this radar range");
+        return null;
+      }
+      const body = {
+        source_object: data.object || null,
+        center_lat: data.center_lat,
+        center_lon: data.center_lon,
+      };
+      const range = Number(data.range_nm);
+      if (Number.isFinite(range) && range > 0) body.radius_nm = range;
+      return body;
+    }
     if (mode !== "vertical") {
       this.showError("Switch to the vertical-angle tab to edit this CPL");
       return null;
@@ -1016,7 +1100,11 @@ class DrSightPanel extends HTMLElement {
    * @returns {void}
    */
   beginEdit(record) {
-    if (record.kind === "lop" && record.lop_type !== "bearing") {
+    if (
+      record.kind === "lop" &&
+      record.lop_type !== "bearing" &&
+      record.lop_type !== "radar-bearing"
+    ) {
       this.showError(
         "Celestial LOPs can't be edited in the form — delete and re-reduce the sight",
       );
@@ -1028,7 +1116,14 @@ class DrSightPanel extends HTMLElement {
       id: record.kind === "lop" ? record.lop_id : record.cpl_id,
       type: record.kind === "lop" ? record.lop_type : record.cpl_type,
     };
-    const mode = record.kind === "lop" ? "bearing" : "vertical";
+    // Radar-entry CPLs edit in the radar tab (radius re-entry), other
+    // CPLs in the vertical-angle tab, LOPs in the bearing tab.
+    const mode =
+      record.kind === "lop"
+        ? "bearing"
+        : record.cpl_type === "radar-range"
+          ? "radar"
+          : "vertical";
     this.switchTab(mode);
     const form = this.shadowRoot.querySelector(`#form-${mode}`);
     const note = this.shadowRoot.querySelector("#editing-note");
@@ -1131,7 +1226,7 @@ class DrSightPanel extends HTMLElement {
    */
   parseFormCoords(data, mode) {
     const prefix =
-      mode === "vertical"
+      mode === "vertical" || mode === "radar"
         ? "center"
         : mode === "bearing"
           ? "object"

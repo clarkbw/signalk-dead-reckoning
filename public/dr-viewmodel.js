@@ -1293,7 +1293,10 @@ export function verticalAngleDistanceNm(heightM, angleDeg) {
 export function bearingLopBody(form) {
   const bearing = bearingFromFormTrue(form);
   const body = {
-    lop_type: "bearing",
+    // A radar-derived bearing is recorded with its own provenance (work
+    // doc #33) — same geometry as a hand-bearing compass (a ray to the
+    // object), different instrument and error character.
+    lop_type: form.bearing_instrument === "radar" ? "radar-bearing" : "bearing",
     assumed_lat: Number(form.object_lat),
     assumed_lon: Number(form.object_lon),
     // +90° so the line runs along the bearing (engine normal ⊥ line).
@@ -1321,6 +1324,31 @@ export function verticalAngleCplBody(form) {
     center_lat: Number(form.center_lat),
     center_lon: Number(form.center_lon),
     radius_nm: verticalAngleDistanceNm(form.height_m, form.angle_deg),
+    source_object: form.object || null,
+    confirmed_by: form.confirmed_by || null,
+  };
+  const ts = sightTimeToIso(form.sight_time, form.sight_tz);
+  if (ts) body.timestamp = ts;
+  return body;
+}
+
+/**
+ * Shape a radar-range form into a `POST /fix/cpl` body (work doc #33).
+ * The CPL is centered on the object's charted position with radius =
+ * the measured radar range. The uncertainty radius is deliberately NOT
+ * set here: the server applies the range-proportional radar error
+ * model (±1.5% of range, 20 m floor — configurable) as the default,
+ * keeping one source of truth for the instrument's error character.
+ *
+ * @param {object} form - { object, range_nm, center_lat, center_lon, sight_time?, sight_tz?, confirmed_by? }
+ * @returns {object}
+ */
+export function radarRangeCplBody(form) {
+  const body = {
+    cpl_type: "radar-range",
+    center_lat: Number(form.center_lat),
+    center_lon: Number(form.center_lon),
+    radius_nm: Number(form.range_nm),
     source_object: form.object || null,
     confirmed_by: form.confirmed_by || null,
   };
@@ -1367,11 +1395,19 @@ export function pendingLopRow(lop) {
  * @returns {{kind: "cpl", id: number, label: string, timestamp: string, used: boolean}}
  */
 export function pendingCplRow(cpl) {
+  const typeWord =
+    cpl.cpl_type === "radar-range"
+      ? "radar range"
+      : cpl.cpl_type === "adsb-ranged" || cpl.cpl_type === "adsb-max-range"
+        ? "adsb"
+        : "";
   return {
     kind: "cpl",
     id: cpl.cpl_id,
     label: cpl.source_object
-      ? `${cpl.source_object} r=${(cpl.radius_nm ?? 0).toFixed(1)} nm`
+      ? typeWord
+        ? `${cpl.source_object} ${typeWord} ${(cpl.radius_nm ?? 0).toFixed(1)} nm`
+        : `${cpl.source_object} r=${(cpl.radius_nm ?? 0).toFixed(1)} nm`
       : `CPL r=${(cpl.radius_nm ?? 0).toFixed(1)} nm`,
     timestamp: cpl.timestamp,
     used: cpl.used_in_fix_id != null,

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Radar fixes: radar range and radar-bearing observations (work doc #33).** Radar is the one ranging instrument on a typical boat that does not depend on GNSS, and the MCA's GNSS-resilience guidance (Note 719) names radar fixing among the practices to maintain. The sight panel gains a **Radar** tab — object name, measured range in NM, the shared sight-time/stopwatch entry, and a chart-pick-pre-filled object position — posting a `radar-range` circular position line; the chart pick menu gains "Radar range at…" alongside the bearing and distance-CPL entries (works on AIS targets too, with a note that a target's position is itself GNSS-derived — charted fixed objects are the spoof-resistant choice). The bearing form gains an **instrument** selector (hand compass / radar): a radar-derived bearing is stored as a `radar-bearing` LOP — identical geometry (a ray to the object, enforced by the resolver's observer-ray guard) with instrument provenance. Radar ranges carry a range-proportional error model: the default uncertainty is the larger of `radarRangeErrorPct`% of the measured range (default 1.5, schema-configurable) and an absolute floor (default 20 m), applied server-side when the client doesn't supply its own estimate; range + bearing to the same object at the same timestamp resolve through the pending list as the classic two-instrument radar fix. Radar ranges log to `signalk-logbook` as observations ("Cape Rocks radar range 4.2 NM"), and radar entries edit in the radar tab like the other observation types.
+
 ## [0.13.3] - 2026-10-15
 
 ### Changed

@@ -31,6 +31,7 @@
  */
 
 const { resolveFix, advanceObservation } = require("./fixes.js");
+const { METRES_PER_NM } = require("./geo.js");
 
 /**
  * The helpers the orchestrator needs, injected by the caller. In
@@ -507,6 +508,33 @@ function defaultOriginErrorNm(sourceType) {
 }
 
 /**
+ * Radar-range error model (work doc #33): a consumer radar's range
+ * accuracy is spec'd around 1% of range (beamwidth + pulse timing),
+ * so the uncertainty grows with the measured distance — plus an
+ * absolute floor for the short-range case where the percentage term
+ * collapses below what marker/plot resolution can support (20 m is
+ * already inside a 2 m cell's display). Configurable: `errorPct`
+ * (percent of range) and `floorM` (metres).
+ *
+ * Pure — unit-testable without Signal K; the POST /fix/cpl route
+ * applies it as the default `radius_uncertainty_nm` for
+ * `cpl_type: 'radar-range'` when the client doesn't supply one.
+ *
+ * @param {number} rangeNm - measured range, nm
+ * @param {object} [opts]
+ * @param {number} [opts.errorPct=1.5] - error as percent of range
+ * @param {number} [opts.floorM=20] - absolute floor, metres
+ * @returns {number} uncertainty radius, nm
+ */
+function radarRangeUncertaintyNm(rangeNm, opts = {}) {
+  const errorPct = Number.isFinite(opts.errorPct) ? opts.errorPct : 1.5;
+  const floorM = Number.isFinite(opts.floorM) ? opts.floorM : 20;
+  const range = Number.isFinite(rangeNm) && rangeNm >= 0 ? rangeNm : 0;
+  const pctNm = (range * errorPct) / 100;
+  return Math.max(pctNm, floorM / METRES_PER_NM);
+}
+
+/**
  * Maximum implied vessel speed (kn) for an observation to be physically
  * plausible: how fast the boat would have had to travel from the last
  * origin-reset fix to be where the reduced observation puts it (sea
@@ -565,6 +593,7 @@ module.exports = {
   loadObservationsById,
   advanceToLatest,
   defaultOriginErrorNm,
+  radarRangeUncertaintyNm,
   evaluateObservationPlausibility,
   fixSanityCapNm,
   MAX_IMPLIED_SPEED_KN,

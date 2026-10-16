@@ -1002,3 +1002,79 @@ test("menuPlacement: flips left at the right edge, clamps top/left", async () =>
     { left: 8, top: 8 },
   );
 });
+
+test("bearingLopBody: radar instrument records radar-bearing provenance", async () => {
+  const vm = await loadVm();
+  const body = vm.bearingLopBody({
+    object: "MATILDA",
+    bearing: 115.5,
+    bearing_instrument: "radar",
+    object_lat: 60,
+    object_lon: 24,
+  });
+  assert.strictEqual(body.lop_type, "radar-bearing");
+  assert.strictEqual(body.azimuth_true, 205.5);
+  // Same geometry as a hand-compass bearing — only provenance differs.
+  const hand = vm.bearingLopBody({
+    object: "MATILDA",
+    bearing: 115.5,
+    bearing_instrument: "hand",
+    object_lat: 60,
+    object_lon: 24,
+  });
+  assert.strictEqual(hand.lop_type, "bearing");
+  // Absent instrument field (older callers) stays hand compass.
+  const legacy = vm.bearingLopBody({
+    object: "MATILDA",
+    bearing: 115.5,
+    object_lat: 60,
+    object_lon: 24,
+  });
+  assert.strictEqual(legacy.lop_type, "bearing");
+});
+
+test("radarRangeCplBody: radar-range CPL on the object, radius = measured range", async () => {
+  const vm = await loadVm();
+  const body = vm.radarRangeCplBody({
+    object: "Cape Rocks",
+    range_nm: "4.2",
+    center_lat: 60,
+    center_lon: 24,
+    confirmed_by: "Alice",
+    sight_time: "2025-01-01T00:00:00",
+    sight_tz: "utc",
+  });
+  assert.strictEqual(body.cpl_type, "radar-range");
+  assert.strictEqual(body.center_lat, 60);
+  assert.strictEqual(body.center_lon, 24);
+  assert.strictEqual(body.radius_nm, 4.2);
+  assert.strictEqual(body.source_object, "Cape Rocks");
+  assert.strictEqual(body.confirmed_by, "Alice");
+  assert.strictEqual(body.timestamp, "2025-01-01T00:00:00.000Z");
+  // The uncertainty radius is the server's error model (range-proportional
+  // default) — the client deliberately doesn't set it.
+  assert.ok(!("radius_uncertainty_nm" in body));
+});
+
+test("pendingCplRow: radar range labeled with its instrument", async () => {
+  const vm = await loadVm();
+  const row = vm.pendingCplRow({
+    cpl_id: 9,
+    timestamp: "2026-08-26T11:00:00Z",
+    cpl_type: "radar-range",
+    source_object: "Cape Rocks",
+    radius_nm: 4.2,
+    used_in_fix_id: null,
+  });
+  assert.strictEqual(row.label, "Cape Rocks radar range 4.2 nm");
+  // Non-radar CPL labels unchanged.
+  const va = vm.pendingCplRow({
+    cpl_id: 10,
+    timestamp: "2026-08-26T11:00:00Z",
+    cpl_type: "vertical-angle",
+    source_object: "lighthouse",
+    radius_nm: 1.25,
+    used_in_fix_id: null,
+  });
+  assert.strictEqual(va.label, "lighthouse r=1.3 nm");
+});

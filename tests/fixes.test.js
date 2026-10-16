@@ -676,3 +676,19 @@ test("onObserverRay: marginal past-object feet within tolerance resolve, beyond 
   });
   assert.equal(onObserverRay(obs, CENTER, past500m), false);
 });
+
+test("onObserverRay: radar-bearing is ray-constrained like a compass bearing", () => {
+  // Same geometry as the bearing test: object west of the observer
+  // (bearing 270 → azimuth 0), observer side is east of the object.
+  const obs = {
+    kind: "lop",
+    lop_type: "radar-bearing",
+    assumed_lat: 60,
+    assumed_lon: 24,
+    azimuth_true: 0,
+  };
+  const east = projectToLocal(CENTER, { latitude: 60, longitude: 24.02 });
+  const west = projectToLocal(CENTER, { latitude: 60, longitude: 23.98 });
+  assert.equal(onObserverRay(obs, CENTER, east), true);
+  assert.equal(onObserverRay(obs, CENTER, west), false);
+});
