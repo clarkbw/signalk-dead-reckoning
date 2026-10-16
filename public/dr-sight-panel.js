@@ -38,9 +38,23 @@ template.innerHTML = /* html */ `
     ${COORD_FIELD_CSS}
     :host { display: block; padding: 1rem; }
     h2 { justify-content: space-between; }
-    /* Bracketed mode toggle — active tab inverts */
-    .tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    .tabs button { flex: 1; }
+    /* Bracketed mode toggle — active tab inverts. Wraps to a second
+       row on narrow viewports rather than overflowing: five methods
+       at theme button sizing don't fit a phone panel, and "CELESTIAL"
+       would clip out of its tab. */
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .tabs button {
+      flex: 1 1 auto;
+      min-width: max-content;
+      white-space: nowrap;
+      font-size: 0.7rem;
+      padding: 0 0.5rem;
+    }
     .tabs button.active {
       background: var(--theme-color);
       color: var(--bg-base);
@@ -159,12 +173,12 @@ template.innerHTML = /* html */ `
     <h2>Sight &amp; LOP Input
       <button id="close-btn" title="Close">✕</button>
     </h2>
-    <div class="tabs">
-      <button data-tab="bearing" class="active">Bearing</button>
-      <button data-tab="vertical">Vert. Angle</button>
-      <button data-tab="radar">Radar</button>
-      <button data-tab="hangle">H. Angle</button>
-      <button data-tab="celestial">Celestial</button>
+    <div class="tabs" role="tablist" aria-label="Sight method">
+      <button data-tab="bearing" class="active" role="tab" aria-selected="true">Bearing</button>
+      <button data-tab="vertical" role="tab" aria-selected="false">Vert. Angle</button>
+      <button data-tab="radar" role="tab" aria-selected="false">Radar</button>
+      <button data-tab="hangle" role="tab" aria-selected="false">H. Angle</button>
+      <button data-tab="celestial" role="tab" aria-selected="false">Celestial</button>
     </div>
 
     <form class="form" id="form-bearing" novalidate>
@@ -490,9 +504,39 @@ class DrSightPanel extends HTMLElement {
     /** @type {{kind: "lop"|"cpl", id: number}|null} PUT-instead-of-POST target */
     this.editing = null;
 
+    /** @type {string} active sight-method tab (tablist state) */
+    this.activeTab = "bearing";
+
     // Tab switching
     root.querySelectorAll(".tabs button").forEach((btn) => {
       btn.addEventListener("click", () => this.switchTab(btn.dataset.tab));
+    });
+    // Tablist keyboard pattern (ARIA tabs): ←/→ cycle the active tab
+    // and move focus, Home/End jump to the ends. Click still works for
+    // pointer users.
+    const tablist = root.querySelector(".tabs");
+    tablist?.addEventListener("keydown", (e) => {
+      if (
+        e.key !== "ArrowLeft" &&
+        e.key !== "ArrowRight" &&
+        e.key !== "Home" &&
+        e.key !== "End"
+      )
+        return;
+      const tabs = [...tablist.querySelectorAll("button")];
+      const idx = tabs.findIndex((b) => b.dataset.tab === this.activeTab);
+      if (idx < 0) return;
+      const next =
+        e.key === "Home"
+          ? 0
+          : e.key === "End"
+            ? tabs.length - 1
+            : (idx + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+              tabs.length;
+      e.preventDefault();
+      const target = tabs[next];
+      this.switchTab(target.dataset.tab);
+      target.focus();
     });
 
     // Submit handlers — the buttons are real type="submit" controls
@@ -697,12 +741,19 @@ class DrSightPanel extends HTMLElement {
   }
 
   /**
-   * @param {string} tab - "bearing" | "vertical" | "celestial"
+   * Shows the given tab's form and hides the others; keeps the
+   * tab strip's ARIA state (`aria-selected`) in step with the visual
+   * active tab.
+   *
+   * @param {string} tab - "bearing" | "vertical" | "radar" | "hangle" | "celestial"
    * @returns {void}
    */
   switchTab(tab) {
+    this.activeTab = tab;
     this.shadowRoot.querySelectorAll(".tabs button").forEach((b) => {
-      b.classList.toggle("active", b.dataset.tab === tab);
+      const active = b.dataset.tab === tab;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", String(active));
     });
     this.shadowRoot.querySelectorAll(".form").forEach((f) => {
       const id = f.id.replace("form-", "");

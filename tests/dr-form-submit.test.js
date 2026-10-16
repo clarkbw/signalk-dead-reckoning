@@ -113,7 +113,7 @@ test("sight panel: radar tab is a real novalidate form on the shared submit path
   );
   assert.match(
     sightSrc,
-    /<button data-tab="radar">Radar</,
+    /<button[^>]*data-tab="radar"[^>]*>Radar</,
     "radar tab present in the tab strip",
   );
   // Required range input, so requiredMissing() covers it.
@@ -170,7 +170,7 @@ test("sight panel: horizontal-angle tab is a real novalidate form on the shared 
   );
   assert.match(
     sightSrc,
-    /<button data-tab="hangle">H\. Angle</,
+    /<button[^>]*data-tab="hangle"[^>]*>H\. Angle</,
     "hangle tab present in the tab strip",
   );
   // The primary angle is required; the second is optional.
@@ -202,4 +202,29 @@ test("sight panel: horizontal-angle CPLs refuse form editing", () => {
   // The circle derives from the measured angle — an edit form can't
   // round-trip it, so beginEdit refuses with a delete-and-re-enter.
   assert.match(sightSrc, /Horizontal-angle CPLs can't be edited in the form/);
+});
+
+test("sight panel: the mode strip is a real tablist, not bare buttons", () => {
+  // Five methods overflowed the old flex row (Celestial clipped out of
+  // its tab on a phone) and the strip had no tab semantics.
+  assert.match(sightSrc, /<div class="tabs" role="tablist"/);
+  for (const tab of ["bearing", "vertical", "radar", "hangle", "celestial"]) {
+    assert.match(
+      sightSrc,
+      new RegExp(`<button[^>]*data-tab="${tab}"[^>]*role="tab"`),
+      `${tab} is a tab, not a bare button`,
+    );
+  }
+  // aria-selected follows the visual active tab in switchTab.
+  assert.match(
+    sightSrc,
+    /b\.setAttribute\("aria-selected", String\(active\)\)/,
+  );
+  // The strip wraps instead of overflowing: buttons keep their natural
+  // width and flow onto a second row on narrow viewports.
+  assert.match(sightSrc, /\.tabs \{[\s\S]*?flex-wrap: wrap;/);
+  assert.match(sightSrc, /\.tabs button \{[\s\S]*?min-width: max-content;/);
+  // ARIA tabs keyboard pattern: arrows cycle, Home/End jump.
+  assert.match(sightSrc, /tablist\?\.addEventListener\("keydown"/);
+  assert.match(sightSrc, /this\.activeTab = tab;/);
 });
