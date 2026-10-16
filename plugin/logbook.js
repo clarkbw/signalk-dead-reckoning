@@ -339,8 +339,9 @@ function composeTackEntry(t) {
  * was observed (object, bearing/radius/reduction).
  *
  * @param {object} o
- * @param {"bearing"|"vertical"|"radar"|"celestial"} o.kind
- * @param {string} [o.body_or_object] - body name (celestial) or object label
+ * @param {"bearing"|"vertical"|"radar"|"hangle"|"celestial"} o.kind
+ * @param {string} [o.body_or_object] - body name (celestial), object label,
+ *   or "A / B" (horizontal-angle CPLs)
  * @param {string} o.datetime - ISO timestamp
  * @param {string|null} [o.confirmed_by] - watchkeeper (author)
  * @param {number} [o.latitude] - vessel position to anchor the entry
@@ -348,7 +349,10 @@ function composeTackEntry(t) {
  * @param {object} [o.reduction] - celestial reduction (Hc/Ho/Zn/intercept)
  * @param {number|null} [o.azimuth_true] - true bearing to the object, deg
  *   (bearing LOPs — the observed angle is the event, it belongs in text)
- * @param {number|null} [o.radius_nm] - CPL radius, nm (vertical-angle CPLs)
+ * @param {number|null} [o.radius_nm] - CPL radius, nm (vertical-angle / radar
+ *   range CPLs)
+ * @param {number|null} [o.angle_deg] - measured horizontal angle, deg
+ *   (horizontal-angle CPLs, work doc #35)
  * @param {number|null} [o.sea_state] - Douglas sea state code 0-9
  * @returns {object} setResource body
  */
@@ -377,6 +381,9 @@ function composeObservationEntry(o) {
       ? ` ${o.radius_nm.toFixed(1)} NM`
       : "";
     text = `${o.body_or_object ?? "object"} radar range${r}`;
+  } else if (o.kind === "hangle") {
+    const a = Number.isFinite(o.angle_deg) ? ` ${o.angle_deg.toFixed(1)}°` : "";
+    text = `${o.body_or_object ?? "objects"} horizontal angle${a}`;
   } else {
     // The observed angle is the event — a bearing entry without it
     // isn't navigable after the fact. Zero-padded like the tack text;

@@ -1078,3 +1078,199 @@ test("pendingCplRow: radar range labeled with its instrument", async () => {
   });
   assert.strictEqual(va.label, "lighthouse r=1.3 nm");
 });
+
+test("horizontalAngleCircle: circle of position through both objects and the navigator", async () => {
+  const vm = await loadVm();
+  const A = [60, 24];
+  const B = [60, 24.1];
+  const P = [60.02, 24.05]; // navigator north of the chord
+  // Measure the actual angle ∠APB in a local equirectangular plane
+  // around P — the honest way to construct a ground-truth sextant
+  // angle without hand-deriving the circle.
+  const R = 6371000;
+  const proj = ([lat, lon]) => ({
+    x: ((lon - P[1]) * Math.PI * R * Math.cos((60 * Math.PI) / 180)) / 180,
+    y: ((lat - P[0]) * Math.PI * R) / 180,
+  });
+  const u = proj(A);
+  const v = proj(B);
+  const dot = u.x * v.x + u.y * v.y;
+  const ang =
+    (Math.acos(dot / (Math.hypot(u.x, u.y) * Math.hypot(v.x, v.y))) * 180) /
+    Math.PI;
+  assert.ok(ang > 0.5 && ang < 179.5, `sanity: measured angle ${ang}`);
+
+  const c = vm.horizontalAngleCircle(A, B, ang, P);
+  // The circle passes through A, B and (within equirect-vs-haversine
+  // slop) the navigator's position.
+  const dA = vm.distanceNm([c.centerLat, c.centerLon], A);
+  const dB = vm.distanceNm([c.centerLat, c.centerLon], B);
+  const dP = vm.distanceNm([c.centerLat, c.centerLon], P);
+  assert.ok(
+    Math.abs(dA - c.radiusNm) < c.radiusNm * 0.01,
+    `dA ${dA} vs r ${c.radiusNm}`,
+  );
+  assert.ok(
+    Math.abs(dB - c.radiusNm) < c.radiusNm * 0.01,
+    `dB ${dB} vs r ${c.radiusNm}`,
+  );
+  assert.ok(
+    Math.abs(dP - c.radiusNm) < 0.05,
+    `navigator on the circle: ${Math.abs(dP - c.radiusNm)} nm off`,
+  );
+  // Chord length sanity: r ≥ d/2 always.
+  assert.ok(c.radiusNm >= vm.distanceNm(A, B) / 2);
+});
+
+test("horizontalAngleCircle: mirror side resolved against DR, degenerates rejected", async () => {
+  const vm = await loadVm();
+  const A = [60, 24];
+  const B = [60, 24.1];
+  const P = [59.98, 24.05]; // navigator SOUTH of the chord this time
+  const R = 6371000;
+  const proj = ([lat, lon]) => ({
+    x: ((lon - P[1]) * Math.PI * R * Math.cos((60 * Math.PI) / 180)) / 180,
+    y: ((lat - P[0]) * Math.PI * R) / 180,
+  });
+  const u = proj(A);
+  const v = proj(B);
+  const ang =
+    (Math.acos(
+      (u.x * v.x + u.y * v.y) / (Math.hypot(u.x, u.y) * Math.hypot(v.x, v.y)),
+    ) *
+      180) /
+    Math.PI;
+  const c = vm.horizontalAngleCircle(A, B, ang, P);
+  const dP = vm.distanceNm([c.centerLat, c.centerLon], P);
+  assert.ok(
+    Math.abs(dP - c.radiusNm) < 0.05,
+    `navigator on the circle from the south side too: ${Math.abs(dP - c.radiusNm)} nm off`,
+  );
+  // Unmeasurable angles refuse rather than producing planet-sized circles.
+  assert.throws(
+    () => vm.horizontalAngleCircle(A, B, 0.2, P),
+    /0\.5° and 179\.5°/,
+  );
+  assert.throws(
+    () => vm.horizontalAngleCircle(A, B, 179.8, P),
+    /0\.5° and 179\.5°/,
+  );
+  // Coincident objects refuse.
+  assert.throws(
+    () => vm.horizontalAngleCircle(A, [60, 24], 45, P),
+    /distinct objects/,
+  );
+  // Missing DR refuses — the mirror side needs a reference.
+  assert.throws(
+    () => vm.horizontalAngleCircle(A, B, 45, undefined),
+    /DR position required/,
+  );
+});
+
+test("horizontalAngleCplBodies: one or two observations, raw angle recorded", async () => {
+  const vm = await loadVm();
+  const dr = { latitude: 60.02, longitude: 24.05 };
+  // The sight's angles are measured AT the vessel — construct the
+  // ground truth by measuring ∠ADB and ∠BDC from the DR position in a
+  // local plane, so the DR honestly sits on both circles.
+  const R = 6371000;
+  const proj = (p) => ({
+    x:
+      ((p[1] - dr.longitude) *
+        Math.PI *
+        R *
+        Math.cos((dr.latitude * Math.PI) / 180)) /
+      180,
+    y: ((p[0] - dr.latitude) * Math.PI * R) / 180,
+  });
+  const measured = (p1, p2) => {
+    const u = proj(p1);
+    const v = proj(p2);
+    return (
+      (Math.acos(
+        (u.x * v.x + u.y * v.y) / (Math.hypot(u.x, u.y) * Math.hypot(v.x, v.y)),
+      ) *
+        180) /
+      Math.PI
+    );
+  };
+  const A = [60, 24];
+  const B = [60, 24.1];
+  const C = [60.05, 24.05];
+  const angle1 = measured(A, B);
+  const angle2 = measured(B, C);
+  const form = {
+    object_a: "Lighthouse",
+    object_b: "Tower",
+    angle_1: angle1.toFixed(6),
+    objA_lat: "60",
+    objA_lon: "24",
+    objB_lat: "60",
+    objB_lon: "24.1",
+    confirmed_by: "Alice",
+    sight_time: "2025-01-01T00:00:00",
+    sight_tz: "utc",
+  };
+  const [single] = vm.horizontalAngleCplBodies(form, dr);
+  assert.strictEqual(single.cpl_type, "horizontal-angle");
+  assert.strictEqual(single.source_object, "Lighthouse / Tower");
+  // The form carries a string; Number() round-trips at entry precision.
+  assert.ok(
+    Math.abs(single.angle_deg - angle1) < 1e-5,
+    `angle_deg ${single.angle_deg} vs measured ${angle1}`,
+  );
+  assert.strictEqual(single.confirmed_by, "Alice");
+  assert.strictEqual(single.timestamp, "2025-01-01T00:00:00.000Z");
+  assert.ok(Number.isFinite(single.radius_nm) && single.radius_nm > 0);
+  // Circle geometry: both objects on the circle.
+  const dA = vm.distanceNm([single.center_lat, single.center_lon], [60, 24]);
+  assert.ok(Math.abs(dA - single.radius_nm) < single.radius_nm * 0.01);
+
+  // With the second angle and object C: two bodies, B shared.
+  const form2 = {
+    ...form,
+    object_c: "Spire",
+    angle_2: angle2.toFixed(6),
+    objC_lat: "60.05",
+    objC_lon: "24.05",
+  };
+  const bodies = vm.horizontalAngleCplBodies(form2, dr);
+  assert.strictEqual(bodies.length, 2);
+  assert.strictEqual(bodies[1].source_object, "Tower / Spire");
+  assert.ok(
+    Math.abs(bodies[1].angle_deg - angle2) < 1e-5,
+    `angle_deg ${bodies[1].angle_deg} vs measured ${angle2}`,
+  );
+  // The two circles intersect at the navigator (classic three-point
+  // fix) — check via the distance of the DR position to each circle.
+  const dB2 = Math.abs(
+    vm.distanceNm([bodies[1].center_lat, bodies[1].center_lon], [60, 24.1]) -
+      bodies[1].radius_nm,
+  );
+  assert.ok(dB2 < bodies[1].radius_nm * 0.01);
+  const miss1 = Math.abs(
+    vm.distanceNm(
+      [bodies[0].center_lat, bodies[0].center_lon],
+      [dr.latitude, dr.longitude],
+    ) - bodies[0].radius_nm,
+  );
+  const miss2 = Math.abs(
+    vm.distanceNm(
+      [bodies[1].center_lat, bodies[1].center_lon],
+      [dr.latitude, dr.longitude],
+    ) - bodies[1].radius_nm,
+  );
+  assert.ok(miss1 < 0.05, `DR on circle 1: ${miss1} nm off`);
+  assert.ok(miss2 < 0.05, `DR on circle 2: ${miss2} nm off`);
+
+  // Second angle without object C refuses.
+  assert.throws(
+    () => vm.horizontalAngleCplBodies({ ...form, angle_2: 60 }, dr),
+    /object C position required/,
+  );
+  // Missing DR refuses before any shaping.
+  assert.throws(
+    () => vm.horizontalAngleCplBodies(form, null),
+    /DR position required/,
+  );
+});

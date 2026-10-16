@@ -442,3 +442,18 @@ test("composeObservationEntry: radar range names the object and the range", () =
   assert.match(body.text, /Cape Rocks radar range 4\.2 NM/);
   assert.strictEqual(pv1(body, "navigation.position").source, "DR");
 });
+
+test("composeObservationEntry: horizontal angle names the objects and the angle", () => {
+  const body = composeObservationEntry({
+    kind: "hangle",
+    datetime: "2026-01-01T12:00:00Z",
+    body_or_object: "Lighthouse / Tower",
+    latitude: 60,
+    longitude: 24,
+    angle_deg: 45.5,
+  });
+  assert.strictEqual(body.category, "navigation");
+  assert.strictEqual(body.origin, "agent");
+  assert.match(body.text, /Lighthouse \/ Tower horizontal angle 45\.5°/);
+  assert.strictEqual(pv1(body, "navigation.position").source, "DR");
+});

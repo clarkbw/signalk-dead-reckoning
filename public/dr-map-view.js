@@ -1093,6 +1093,10 @@ class DrMapView extends HTMLElement {
           // AIS target (whose position is itself GNSS-derived; the
           // radar form's note says so).
           { label: ` Radar range at ${what}`, mode: "radar" },
+          // Horizontal sextant angle (work doc #35): the compass-free
+          // fix. Successive picks fill the form's object slots A → B
+          // → C.
+          { label: ` Horizontal angle at ${what}`, mode: "hangle" },
           { label: " Measure from here…", mode: "_measure" },
           { label: " New note at…", mode: "_note" },
         ];

@@ -2968,7 +2968,12 @@ module.exports = (app) => {
       const obsBy = b.confirmed_by || usernameFromCookies(req.cookies) || null;
       writeLogbookEntry(
         deps.composeObservationEntry({
-          kind: b.cpl_type === "radar-range" ? "radar" : "vertical",
+          kind:
+            b.cpl_type === "radar-range"
+              ? "radar"
+              : b.cpl_type === "horizontal-angle"
+                ? "hangle"
+                : "vertical",
           datetime: b.timestamp ?? new Date().toISOString(),
           body_or_object: b.source_object ?? null,
           confirmed_by: obsBy,
@@ -2976,6 +2981,7 @@ module.exports = (app) => {
           latitude: engine.origin?.latitude,
           longitude: engine.origin?.longitude,
           radius_nm: b.radius_nm,
+          angle_deg: b.angle_deg ?? null,
           sea_state:
             resolveSeaState() !== "unknown" ? Number(resolveSeaState()) : null,
         }),

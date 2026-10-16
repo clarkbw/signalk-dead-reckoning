@@ -130,7 +130,7 @@ test("sight panel: radar ranges parse the center coordinate prefix", () => {
   // parseFormCoords must route the radar mode there.
   assert.match(
     sightSrc,
-    /mode === "vertical" \|\| mode === "radar"\s*\n\s*\? "center"/,
+    /mode === "vertical" \|\| mode === "radar"\s*\n\s*\? \["center"\]/,
     "radar mode parses the center prefix",
   );
 });
@@ -153,4 +153,53 @@ test("map view: pick menu offers the radar range entry", () => {
     /` Radar range at \$\{what\}`, mode: "radar"/,
     "radar range in the pick menu alongside bearing and distance CPL",
   );
+});
+
+test("sight panel: horizontal-angle tab is a real novalidate form on the shared submit path", () => {
+  // The compass-free fix (work doc #35) rides the same single-path
+  // submit machinery as the other modes.
+  assert.match(
+    sightSrc,
+    /<form class="form" id="form-hangle"[^>]*novalidate/,
+    "hangle form is novalidate like its siblings",
+  );
+  assert.match(
+    sightSrc,
+    /data-submit="hangle">Add horizontal angle</,
+    "hangle form has a real submit button",
+  );
+  assert.match(
+    sightSrc,
+    /<button data-tab="hangle">H\. Angle</,
+    "hangle tab present in the tab strip",
+  );
+  // The primary angle is required; the second is optional.
+  assert.match(
+    sightSrc,
+    /name="angle_1"[^>]*required/,
+    "angle A–B is a required field",
+  );
+  assert.match(
+    sightSrc,
+    /name="angle_2" type="number"(?![^>]*required)/,
+    "angle B–C is optional",
+  );
+  // Three object-position fieldsets (A, B, C).
+  assert.match(sightSrc, /data-prefix="objA"/);
+  assert.match(sightSrc, /data-prefix="objB"/);
+  assert.match(sightSrc, /data-prefix="objC"/);
+});
+
+test("sight panel: hangle mode parses all three object prefixes", () => {
+  assert.match(
+    sightSrc,
+    /\["objA", "objB", "objC"\]/,
+    "hangle parses the A/B/C coordinate prefixes",
+  );
+});
+
+test("sight panel: horizontal-angle CPLs refuse form editing", () => {
+  // The circle derives from the measured angle — an edit form can't
+  // round-trip it, so beginEdit refuses with a delete-and-re-enter.
+  assert.match(sightSrc, /Horizontal-angle CPLs can't be edited in the form/);
 });

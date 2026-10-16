@@ -4680,3 +4680,35 @@ test("POST /fix/cpl: radar range gets the range-proportional uncertainty default
   await rm(dir, { recursive: true, force: true });
   await rm(dir2, { recursive: true, force: true });
 });
+
+test("POST /fix/cpl: horizontal-angle CPL persists with the measured angle", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dr-hangle-cpl-"));
+  const app = new FakeSignalKApp();
+  app.dataPath = dir;
+  const plugin = makePlugin(app);
+  plugin.start({});
+  const router = new FakeRouter();
+  plugin.registerWithRouter(router);
+  const { status, body } = router.invoke("post", "/fix/cpl", {
+    cpl_type: "horizontal-angle",
+    center_lat: 60.01,
+    center_lon: 24.02,
+    radius_nm: 3.5,
+    source_object: "Lighthouse / Tower",
+    angle_deg: 45.5,
+  });
+  assert.strictEqual(status, 200);
+  plugin.stop();
+  const db = new DatabaseSync(join(dir, "dead-reckoning.sqlite"), {
+    readOnly: true,
+  });
+  const row = db
+    .prepare("SELECT * FROM circular_position_lines WHERE cpl_id = ?")
+    .get(body.cpl_id);
+  assert.strictEqual(row.cpl_type, "horizontal-angle");
+  assert.strictEqual(row.radius_nm, 3.5);
+  assert.strictEqual(row.raw_angle_deg, 45.5);
+  assert.strictEqual(row.source_object, "Lighthouse / Tower");
+  db.close();
+  await rm(dir, { recursive: true, force: true });
+});

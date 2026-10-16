@@ -1358,6 +1358,120 @@ export function radarRangeCplBody(form) {
 }
 
 /**
+ * Circle of position for a horizontal sextant angle (work doc #35).
+ *
+ * The navigator measures the horizontal angle θ between two charted
+ * objects A and B. By the inscribed-angle theorem every point P that
+ * sees the chord AB under the angle θ lies on a circle through A and
+ * B whose radius is `r = d(A,B) / (2·sin θ)` — the classic compass-free
+ * three-point fix builds on two such circles (A–B and B–C).
+ *
+ * The chord defines TWO mirror-image circles; the navigator sits on
+ * one of them. Rather than deriving which side from the angle size
+ * (the center/navigator side relationship flips at θ = 90°), both
+ * candidates are computed and the one whose circle passes nearest the
+ * current DR position wins — DR ≈ navigator's position, so the wrong
+ * mirror is kilometers away from the right one. Degenerate inputs
+ * (coincident objects, angles at or beyond the practically measurable
+ * range) throw with navigator-facing messages.
+ *
+ * @param {[number, number]} a - object A [lat, lon]
+ * @param {[number, number]} b - object B [lat, lon]
+ * @param {number} angleDeg - measured horizontal angle A→B, degrees
+ * @param {[number, number]} drPosition - [lat, lon] current DR estimate
+ * @returns {{centerLat: number, centerLon: number, radiusNm: number}}
+ */
+export function horizontalAngleCircle(a, b, angleDeg, drPosition) {
+  if (
+    !Array.isArray(drPosition) ||
+    !Number.isFinite(drPosition[0]) ||
+    !Number.isFinite(drPosition[1])
+  ) {
+    throw new Error(
+      "DR position required — the circle's mirror side is picked against it",
+    );
+  }
+  const angle = Number(angleDeg);
+  if (!Number.isFinite(angle)) throw new Error("horizontal angle required");
+  if (angle < 0.5 || angle > 179.5) {
+    throw new Error(
+      "horizontal angle must be between 0.5° and 179.5° — re-read the sextant",
+    );
+  }
+  const d = distanceNm(a, b);
+  if (!Number.isFinite(d) || d < 1e-9) {
+    throw new Error("the two objects coincide — pick two distinct objects");
+  }
+  const thetaRad = (angle * Math.PI) / 180;
+  const radiusNm = d / (2 * Math.sin(thetaRad));
+  const chordBearing = bearingBetween(a, b);
+  const mid = destinationPoint(a, chordBearing, d / 2);
+  const offsetNm = radiusNm * Math.abs(Math.cos(thetaRad));
+  const c1 = destinationPoint(mid, chordBearing + 90, offsetNm);
+  const c2 = destinationPoint(mid, chordBearing - 90, offsetNm);
+  const miss = (c) => Math.abs(distanceNm(c, drPosition) - radiusNm);
+  const best = miss(c1) <= miss(c2) ? c1 : c2;
+  return { centerLat: best[0], centerLon: best[1], radiusNm };
+}
+
+/**
+ * Shapes a horizontal-angle form into `POST /fix/cpl` bodies (work doc
+ * #35). One or two observations: the A–B angle always; the B–C angle
+ * (the classic three-point fix) when the second angle and object C are
+ * filled. Both land in the pending list and resolve through the
+ * existing Circle×Circle branch. The server records the measured angle
+ * (`angle_deg` → `raw_angle_deg`) for backtesting.
+ *
+ * @param {object} form - { object_a, object_b, object_c?, angle_1,
+ *   angle_2?, objA_lat, objA_lon, objB_lat, objB_lon, objC_lat?, objC_lon?,
+ *   sight_time?, sight_tz?, confirmed_by? }
+ * @param {[number, number]|null} drPosition - [lat, lon] current DR estimate
+ * @returns {object[]} 1 or 2 POST bodies
+ */
+export function horizontalAngleCplBodies(form, drPosition) {
+  if (!drPosition) {
+    throw new Error(
+      "DR position required — the circle side is picked against it",
+    );
+  }
+  const dr = [
+    drPosition.latitude ?? drPosition[0],
+    drPosition.longitude ?? drPosition[1],
+  ];
+  const bodies = [];
+  const mk = (a, b, angle, label) => {
+    const c = horizontalAngleCircle(a, b, angle, dr);
+    const body = {
+      cpl_type: "horizontal-angle",
+      center_lat: c.centerLat,
+      center_lon: c.centerLon,
+      radius_nm: c.radiusNm,
+      source_object: label,
+      confirmed_by: form.confirmed_by || null,
+      angle_deg: Number(angle),
+    };
+    const ts = sightTimeToIso(form.sight_time, form.sight_tz);
+    if (ts) body.timestamp = ts;
+    return body;
+  };
+  const a = [Number(form.objA_lat), Number(form.objA_lon)];
+  const b = [Number(form.objB_lat), Number(form.objB_lon)];
+  const nameA = form.object_a || "A";
+  const nameB = form.object_b || "B";
+  bodies.push(mk(a, b, form.angle_1, `${nameA} / ${nameB}`));
+  const angle2 = Number(form.angle_2);
+  if (Number.isFinite(angle2) && form.angle_2 !== "") {
+    const c = [Number(form.objC_lat), Number(form.objC_lon)];
+    if (!Number.isFinite(c[0]) || !Number.isFinite(c[1])) {
+      throw new Error("object C position required for the second angle");
+    }
+    const nameC = form.object_c || "C";
+    bodies.push(mk(b, c, angle2, `${nameB} / ${nameC}`));
+  }
+  return bodies;
+}
+
+/**
  * Shape a celestial-sight form into a `POST /celestial/sight` body.
  *
  * @param {object} form - { body, hs_deg, index_correction_deg?, eye_height_m?,

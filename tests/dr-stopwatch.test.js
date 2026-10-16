@@ -52,8 +52,8 @@ test("sight panel: every form carries the stopwatch entry", () => {
     const count = src.split(field).length - 1;
     assert.equal(
       count,
-      4,
-      `${field} should appear once per form (bearing/vertical/radar/celestial)`,
+      5,
+      `${field} should appear once per form (bearing/vertical/radar/hangle/celestial)`,
     );
   }
 });

@@ -1,12 +1,15 @@
 /**
  * `<dr-sight-panel>` — interactive observation entry (SPEC §14.1 "Manual
- * LOP & Sight Input"). Four input modes share a single panel:
+ * LOP & Sight Input"). Five input modes share a single panel:
  *
  *   1. Compass bearing → LOP (passes through the observer; instrument
  *      selectable hand-bearing compass / radar, work doc #33)
  *   2. Vertical-angle sight → CPL (distance to object of known height)
  *   3. Radar range → CPL (distance to an object of known position)
- *   4. Celestial sight → LOP via Marcq St. Hilaire (POST /celestial/sight)
+ *   4. Horizontal sextant angle → CPL(s) (compass-free circles of
+ *      position through two charted objects; two angles = the classic
+ *      three-point fix, work doc #35)
+ *   5. Celestial sight → LOP via Marcq St. Hilaire (POST /celestial/sight)
  *
  * Submitted observations collect in a "pending" list; "Resolve" previews
  * a candidate fix, "Confirm" snaps the DR origin. `confirmed_by` is
@@ -160,6 +163,7 @@ template.innerHTML = /* html */ `
       <button data-tab="bearing" class="active">Bearing</button>
       <button data-tab="vertical">Vert. Angle</button>
       <button data-tab="radar">Radar</button>
+      <button data-tab="hangle">H. Angle</button>
       <button data-tab="celestial">Celestial</button>
     </div>
 
@@ -331,6 +335,77 @@ template.innerHTML = /* html */ `
       </fieldset>
       <div class="actions">
         <button type="submit" class="primary" data-submit="radar">Add radar range</button>
+      </div>
+    </form>
+
+    <form class="form" id="form-hangle" hidden novalidate>
+      <div class="row">
+        <label>Object A
+          <input name="object_a" placeholder="lighthouse…" />
+        </label>
+        <label>Object B
+          <input name="object_b" placeholder="tower…" />
+        </label>
+      </div>
+      <div class="row">
+        <label title="Horizontal sextant angle between objects A and B">
+          Angle A–B (°)
+          <input name="angle_1" type="number" step="0.1" min="0.5" max="179.5" required />
+        </label>
+        <label title="Second angle B–C — with object C this is the classic three-point fix">
+          Angle B–C (°)
+          <input name="angle_2" type="number" step="0.1" min="0.5" max="179.5" />
+        </label>
+      </div>
+      <label>Object C (second angle)
+        <input name="object_c" placeholder="spire…" />
+      </label>
+      <p class="instrument-note" title="The compass-free fix (work doc #35): two angles between three charted objects resolve directly; one angle alone is a circle of position, combinable with any bearing or range">
+        A horizontal-angle fix needs no compass — the sextant measures the angle between charted objects.
+      </p>
+      <div class="sight-time">
+        <label>Sight time
+          <input name="sight_time" type="datetime-local" step="1" required />
+        </label>
+        <label class="tz-toggle" title="Switch between local time and UTC">
+          <select name="sight_tz">
+            <option value="local">local</option>
+            <option value="utc">UTC</option>
+          </select>
+        </label>
+        <label class="ago-toggle" title="Stopwatch method: start a watch at the sight, then enter the minutes/seconds elapsed — converted to clock time as you type">
+          <select name="sight_time_mode">
+            <option value="clock">clock</option>
+            <option value="ago">ago</option>
+          </select>
+        </label>
+      </div>
+      <div class="sight-ago" hidden>
+        <label>Min ago
+          <input name="sight_ago_min" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
+        </label>
+        <label>Sec ago
+          <input name="sight_ago_sec" type="number" min="0" step="0.1" inputmode="numeric" placeholder="0" />
+        </label>
+        <span class="ago-note">converted on entry</span>
+      </div>
+      <fieldset class="coord" data-prefix="objA">
+        <legend>Object A position</legend>
+        <div class="coord-lat"></div>
+        <div class="coord-lon"></div>
+      </fieldset>
+      <fieldset class="coord" data-prefix="objB">
+        <legend>Object B position</legend>
+        <div class="coord-lat"></div>
+        <div class="coord-lon"></div>
+      </fieldset>
+      <fieldset class="coord" data-prefix="objC">
+        <legend>Object C position (second angle)</legend>
+        <div class="coord-lat"></div>
+        <div class="coord-lon"></div>
+      </fieldset>
+      <div class="actions">
+        <button type="submit" class="primary" data-submit="hangle">Add horizontal angle</button>
       </div>
     </form>
 
@@ -822,16 +897,57 @@ class DrSightPanel extends HTMLElement {
    * @param {number} [tMs] - pick instant the position is valid for
    * @returns {void}
    */
+  /**
+   * Pre-seeds an object-position fieldset from a chart pick (right-click
+   * → "Add bearing to here" / "Distance CPL at here" / "Radar range at
+   * here" / "Horizontal angle at here"). Switches to the matching tab.
+   * For the horizontal-angle form (work doc #35) the pick fills the
+   * first empty object slot — A, then B, then C for the second angle —
+   * since a sextant angle names its objects on the chart one pick at a
+   * time; when all three are filled, A is overwritten. For an AIS target
+   * the seeded position is its *predicted* position and the sight time
+   * seeds to the pick instant instead of re-seeding to "now".
+   *
+   * @param {number} lat
+   * @param {number} lon
+   * @param {"bearing"|"vertical"|"radar"|"hangle"} mode
+   * @param {string} [label] - charted name / AIS target name, if any
+   * @param {number} [tMs] - pick instant the position is valid for
+   * @returns {void}
+   */
   seedObjectPosition(lat, lon, mode, label, tMs = null) {
-    const prefix = mode === "bearing" ? "object" : "center";
+    const prefix =
+      mode === "bearing" ? "object" : mode === "hangle" ? null : "center";
     const tab = mode === "bearing" ? "bearing" : mode;
     this.switchTab(tab);
     const form = this.shadowRoot.querySelector(`#form-${tab}`);
+    let target = prefix;
+    if (mode === "hangle") {
+      // First empty object slot wins; all filled → overwrite A.
+      target = null;
+      for (const p of ["objA", "objB", "objC"]) {
+        const fs = form?.querySelector(`fieldset.coord[data-prefix="${p}"]`);
+        const filled = fs
+          ? [...fs.querySelectorAll("input, select")].some(
+              (el) => el.value !== "",
+            )
+          : false;
+        if (fs && !filled) {
+          target = p;
+          break;
+        }
+      }
+      if (!target) target = "objA";
+    }
     const fs = this.shadowRoot.querySelector(
-      `fieldset.coord[data-prefix="${prefix}"]`,
+      `fieldset.coord[data-prefix="${target}"]`,
     );
     if (typeof label === "string" && label.length > 0) {
-      const nameInput = form?.querySelector('input[name="object"]');
+      const nameInput = form?.querySelector(
+        mode === "hangle"
+          ? `input[name="object_${target.slice(-1).toLowerCase()}"]`
+          : 'input[name="object"]',
+      );
       if (nameInput) nameInput.value = label;
     }
     if (Number.isFinite(tMs)) {
@@ -911,7 +1027,7 @@ class DrSightPanel extends HTMLElement {
    * Reads a form by mode name, builds the REST body via the view-model,
    * submits, and on success records the returned id.
    *
-   * @param {"bearing"|"vertical"|"radar"|"celestial"} mode
+   * @param {"bearing"|"vertical"|"radar"|"hangle"|"celestial"} mode
    * @returns {Promise<void>}
    */
   async submit(mode) {
@@ -951,6 +1067,30 @@ class DrSightPanel extends HTMLElement {
       } else if (mode === "radar") {
         path = "/fix/cpl";
         body = vm.radarRangeCplBody(data);
+      } else if (mode === "hangle") {
+        // One or two circle-of-position observations (the A–B angle
+        // always; B–C for the classic three-point fix). Posted in
+        // order; a failure on the second leaves the first recorded.
+        const bodies = vm.horizontalAngleCplBodies(
+          data,
+          this.lastKnownPosition,
+        );
+        const results = [];
+        for (const b of bodies) {
+          const res = await fetch(`${API}/fix/cpl`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(b),
+          });
+          const result = await res.json();
+          if (!res.ok) throw new Error(result.message || `HTTP ${res.status}`);
+          results.push(result);
+        }
+        this.finishSubmit(form, results.length);
+        // Leave the status readable briefly, then close — same as the
+        // single-observation path.
+        this.autoClose();
+        return;
       } else {
         path = "/celestial/sight";
         body = vm.celestialSightBody(data);
@@ -968,51 +1108,69 @@ class DrSightPanel extends HTMLElement {
         this.showReduction(result.reduction);
       }
 
-      const wasEditing = this.editing != null;
-      this.endEdit();
-      form.reset();
-      // form.reset() restores the time-mode select's first option
-      // ("clock") — re-hide the stopwatch row to match.
-      for (const row of form.querySelectorAll(".sight-ago")) row.hidden = true;
-      // Clear dirty flags so the next sight re-seeds from the boat.
-      form.querySelectorAll('[data-dirty="true"]').forEach((el) => {
-        delete el.dataset.dirty;
-      });
-      // form.reset() resets the tz select to its first option ("local");
-      // restore the saved preference so the next sight uses it.
-      const tzSel = form.querySelector('select[name="sight_tz"]');
-      if (tzSel) tzSel.value = this.loadSightTz();
-      // Same for the bearing reference (reset lands on "mag" — the
-      // default — but the navigator's saved preference wins), plus
-      // re-seed the variation from the stream now that dirty flags
-      // are cleared.
-      const refSel = form.querySelector('select[name="bearing_ref"]');
-      if (refSel) {
-        refSel.value = this.loadBearingRef();
-        this.applyBearingRef();
-      }
-      this.seedVariation();
-      this.updateVerticalDistance();
-      // Re-seed assumed position now that dirty flags are cleared.
-      if (this.lastKnownPosition)
-        this.setDefaultPosition(this.lastKnownPosition);
-      // Re-seed the sight time to now (reset cleared it).
-      this.seedSightTime();
-      this.showStatus(
-        wasEditing ? "Observation updated" : "Observation added to pending",
-      );
-      this.dispatchEvent(
-        new CustomEvent("dr-observations-changed", {
-          bubbles: true,
-          composed: true,
-        }),
-      );
+      this.finishSubmit(form);
       // Leave the status/reduction readable briefly, then close the
       // dialog — same pattern as the fix and current panels.
       this.autoClose();
     } catch (err) {
       this.showError(err.message);
     }
+  }
+
+  /**
+   * Shared post-submit success path: exit edit mode, reset the form,
+   * restore the persisted preferences the reset clobbered, re-seed
+   * boat-derived fields, surface the status and refresh the pending
+   * list. Called by every observation mode after its POST/PUT(s)
+   * succeeded.
+   *
+   * @param {HTMLFormElement} form
+   * @param {number} [addedCount=1] - observations recorded by this submit
+   * @returns {void}
+   */
+  finishSubmit(form, addedCount = 1) {
+    const wasEditing = this.editing != null;
+    this.endEdit();
+    form.reset();
+    // form.reset() restores the time-mode select's first option
+    // ("clock") — re-hide the stopwatch row to match.
+    for (const row of form.querySelectorAll(".sight-ago")) row.hidden = true;
+    // Clear dirty flags so the next sight re-seeds from the boat.
+    form.querySelectorAll('[data-dirty="true"]').forEach((el) => {
+      delete el.dataset.dirty;
+    });
+    // form.reset() resets the tz select to its first option ("local");
+    // restore the saved preference so the next sight uses it.
+    const tzSel = form.querySelector('select[name="sight_tz"]');
+    if (tzSel) tzSel.value = this.loadSightTz();
+    // Same for the bearing reference (reset lands on "mag" — the
+    // default — but the navigator's saved preference wins), plus
+    // re-seed the variation from the stream now that dirty flags
+    // are cleared.
+    const refSel = form.querySelector('select[name="bearing_ref"]');
+    if (refSel) {
+      refSel.value = this.loadBearingRef();
+      this.applyBearingRef();
+    }
+    this.seedVariation();
+    this.updateVerticalDistance();
+    // Re-seed assumed position now that dirty flags are cleared.
+    if (this.lastKnownPosition) this.setDefaultPosition(this.lastKnownPosition);
+    // Re-seed the sight time to now (reset cleared it).
+    this.seedSightTime();
+    this.showStatus(
+      wasEditing
+        ? "Observation updated"
+        : addedCount > 1
+          ? `${addedCount} observations added to pending`
+          : "Observation added to pending",
+    );
+    this.dispatchEvent(
+      new CustomEvent("dr-observations-changed", {
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /**
@@ -1100,6 +1258,12 @@ class DrSightPanel extends HTMLElement {
    * @returns {void}
    */
   beginEdit(record) {
+    if (record.kind === "cpl" && record.cpl_type === "horizontal-angle") {
+      this.showError(
+        "Horizontal-angle CPLs can't be edited in the form — the circle derives from the measured angle; delete and re-enter",
+      );
+      return;
+    }
     if (
       record.kind === "lop" &&
       record.lop_type !== "bearing" &&
@@ -1225,20 +1389,24 @@ class DrSightPanel extends HTMLElement {
    * @returns {void}
    */
   parseFormCoords(data, mode) {
-    const prefix =
+    const prefixes =
       mode === "vertical" || mode === "radar"
-        ? "center"
+        ? ["center"]
         : mode === "bearing"
-          ? "object"
-          : "assumed";
+          ? ["object"]
+          : mode === "hangle"
+            ? ["objA", "objB", "objC"]
+            : ["assumed"];
     const format = this.getAttribute("data-pos-format") ?? "dms";
-    for (const kind of ["lat", "lon"]) {
-      const name = `${prefix}_${kind}`;
-      const deg = readCoordData(data, prefix, kind, format);
-      if (deg != null) data[name] = deg;
-      // Optional + blank → leave unset; the shapers treat missing as
-      // "use DR" / "no position".
-      else delete data[name];
+    for (const prefix of prefixes) {
+      for (const kind of ["lat", "lon"]) {
+        const name = `${prefix}_${kind}`;
+        const deg = readCoordData(data, prefix, kind, format);
+        if (deg != null) data[name] = deg;
+        // Optional + blank → leave unset; the shapers treat missing as
+        // "use DR" / "no position".
+        else delete data[name];
+      }
     }
   }
 
