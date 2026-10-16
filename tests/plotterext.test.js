@@ -72,8 +72,8 @@ test("widget asset entry page and its imports exist on disk", () => {
     "dr-viewmodel.js",
     "dr-theme.js",
     "vendor/plotterext-bus/extension.js",
-    "vendor/plotterext-bus/chunk-7XRFPDQL.js",
-    "vendor/plotterext-bus/chunk-4W6N34SD.js",
+    "vendor/plotterext-bus/chunk-WWNNVR3K.js",
+    "vendor/plotterext-bus/chunk-WV66EF3N.js",
     "vendor/plotterext-bus/LICENSE",
   ]) {
     assert.ok(

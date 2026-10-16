@@ -5,7 +5,33 @@ import {
   RPC_ERRORS,
   RpcError,
   matchesAny
-} from "./chunk-4W6N34SD.js";
+} from "./chunk-WV66EF3N.js";
+
+// src/publish.ts
+var SCOPES = ["all", "extension"];
+function badRequest(message) {
+  return new RpcError(message, {
+    code: RPC_ERRORS.INVALID_PARAMS,
+    reason: "events.badRequest"
+  });
+}
+function parsePublishParams(params) {
+  const p = params ?? {};
+  const { topic, scope = "all" } = p;
+  if (typeof topic !== "string" || topic.length === 0) {
+    throw badRequest("events.publish requires a non-empty topic");
+  }
+  if (topic.includes("*")) {
+    throw badRequest('events.publish topic must not contain "*"');
+  }
+  if (topic === "bus" || topic.startsWith("bus.")) {
+    throw badRequest("events.publish topic must not be in the bus.* namespace");
+  }
+  if (!SCOPES.includes(scope)) {
+    throw badRequest(`events.publish scope must be one of: ${SCOPES.join(", ")}`);
+  }
+  return "params" in p ? { topic, scope, params: p.params } : { topic, scope };
+}
 
 // src/host.ts
 var HostConnection = class {
@@ -107,6 +133,7 @@ var HostConnection = class {
 };
 
 export {
+  parsePublishParams,
   HostConnection
 };
-//# sourceMappingURL=chunk-RED55KML.js.map
+//# sourceMappingURL=chunk-UZTRWLMT.js.map

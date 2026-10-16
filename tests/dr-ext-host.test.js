@@ -20,6 +20,7 @@ const read = (f) =>
     encoding: "utf8",
   });
 const hostSrc = read("dr-ext-host.js");
+const coreSrc = read("dr-ext-host-core.js");
 const appSrc = read("dr-app.js");
 const mapSrc = read("dr-map-view.js");
 const streamSrc = read("dr-signalk-stream.js");
@@ -387,10 +388,13 @@ test("dr-ext-host: the empty-area footprint reservation collapses on phones", ()
 });
 
 test("dr-ext-host: sandboxed same-origin iframes, origin-pinned bus", () => {
+  // The sandbox string is defined once in the core module (shared by
+  // widget, panel and background contexts).
   assert.match(
-    hostSrc,
+    coreSrc,
     /IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms"/,
   );
+  assert.match(hostSrc, /core\.IFRAME_SANDBOX/);
   assert.doesNotMatch(
     hostSrc,
     /allow-top-navigation|allow-popups|allow-modals/,
@@ -478,7 +482,7 @@ test("dr-ext-host: a restored placement's iframe is adopted once its context exi
 test("vendor: host bus entry is vendored alongside the extension side", () => {
   const hostJs = read("vendor/plotterext-bus/host.js");
   assert.match(hostJs, /HostConnection/);
-  read("vendor/plotterext-bus/chunk-RED55KML.js");
+  read("vendor/plotterext-bus/chunk-UZTRWLMT.js");
 });
 
 test("dr-signalk-stream: browser bootstrap is guarded for Node imports", () => {

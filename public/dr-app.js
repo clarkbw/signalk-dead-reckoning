@@ -903,7 +903,18 @@ class DrApp extends HTMLElement {
     this.extHost = new PlotterExtHost({
       stream: window.drSignalkStream,
       mount: root,
+      // The chart, once it exists — map overlays composite onto it and
+      // the map capability reads/drives its viewport.
+      getMap: () => this.map?.map ?? null,
     });
+    // The host hooks the Leaflet events itself, but discovery can land
+    // before the chart exists — forward the element's own view-change
+    // event and kick once so the first overlay frames are requested
+    // even without a user pan.
+    this.map?.addEventListener("dr-view-changed", () =>
+      this.extHost.viewChanged(),
+    );
+    setTimeout(() => this.extHost.viewChanged(), 250);
     for (const el of root.querySelectorAll("dr-ext-widget-area")) {
       this.extHost.attachArea(el);
     }

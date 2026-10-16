@@ -1,7 +1,7 @@
 import {
   ExtensionClient,
   connectExtension
-} from "./chunk-7XRFPDQL.js";
+} from "./chunk-WWNNVR3K.js";
 import {
   BUS_ID,
   BusEndpoint,
@@ -9,11 +9,14 @@ import {
   EVENT_READY,
   RPC_ERRORS,
   RpcError,
+  boundsContainsLon,
+  boundsLonSpan,
   matchesAny,
   matchesPattern,
   messagePort,
+  normalizeBounds,
   windowPort
-} from "./chunk-4W6N34SD.js";
+} from "./chunk-WV66EF3N.js";
 export {
   BUS_ID,
   BusEndpoint,
@@ -22,10 +25,13 @@ export {
   ExtensionClient,
   RPC_ERRORS,
   RpcError,
+  boundsContainsLon,
+  boundsLonSpan,
   connectExtension,
   matchesAny,
   matchesPattern,
   messagePort,
+  normalizeBounds,
   windowPort
 };
 //# sourceMappingURL=extension.js.map

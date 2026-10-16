@@ -75,6 +75,39 @@ function matchesAny(patterns, name) {
   return false;
 }
 
+// src/bounds.ts
+function wrapLon(lon) {
+  if (lon >= -180 && lon <= 180) {
+    return lon;
+  }
+  return ((lon + 180) % 360 + 360) % 360 - 180;
+}
+function boundsLonSpan(bounds) {
+  const [west, , east] = bounds;
+  return east >= west ? east - west : east - west + 360;
+}
+function boundsContainsLon(bounds, lon) {
+  const [west, , east] = bounds;
+  const l = wrapLon(lon);
+  return west <= east ? l >= west && l <= east : l >= west || l <= east;
+}
+function normalizeBounds(bounds) {
+  if (!Array.isArray(bounds) || bounds.length !== 4 || !bounds.every((v) => typeof v === "number" && Number.isFinite(v))) {
+    return void 0;
+  }
+  const [west, south, east, north] = bounds;
+  if (south < -90 || north > 90 || south > north) {
+    return void 0;
+  }
+  const w = wrapLon(west);
+  const e = wrapLon(east);
+  const span = west <= east ? east - west : boundsLonSpan([w, south, e, north]);
+  if (span >= 360) {
+    return [-180, south, 180, north];
+  }
+  return [w, south, e, north];
+}
+
 // src/codec.ts
 function wrap(msg) {
   return { bus: BUS_ID, msg };
@@ -114,8 +147,12 @@ function windowPort(peer, opts = {}) {
   const listenWindow = opts.listenWindow ?? globalThis;
   const origin = opts.origin ?? listenWindow.location?.origin ?? "*";
   return {
-    post(data) {
-      peer.postMessage(data, origin);
+    post(data, transfer) {
+      if (transfer?.length) {
+        peer.postMessage(data, { targetOrigin: origin, transfer });
+      } else {
+        peer.postMessage(data, origin);
+      }
     },
     listen(handler) {
       const fn = (ev) => {
@@ -130,8 +167,12 @@ function windowPort(peer, opts = {}) {
 }
 function messagePort(port) {
   return {
-    post(data) {
-      port.postMessage(data);
+    post(data, transfer) {
+      if (transfer?.length) {
+        port.postMessage(data, transfer);
+      } else {
+        port.postMessage(data);
+      }
     },
     listen(handler) {
       const fn = (ev) => handler(ev.data);
@@ -178,11 +219,21 @@ var BusEndpoint = class {
     this.eventHandlers.add(entry);
     return () => this.eventHandlers.delete(entry);
   }
-  /** Send a notification (an event) to the peer. */
-  notify(method, params) {
-    this.send({ jsonrpc: "2.0", method, ...params !== void 0 ? { params } : {} });
+  /**
+   * Send a notification (an event) to the peer. `opts.transfer` moves the
+   * listed objects instead of copying them.
+   */
+  notify(method, params, opts = {}) {
+    this.send(
+      { jsonrpc: "2.0", method, ...params !== void 0 ? { params } : {} },
+      opts.transfer
+    );
   }
-  /** Call a method on the peer; resolves with its result. */
+  /**
+   * Call a method on the peer; resolves with its result. `opts.transfer`
+   * moves the listed objects (e.g. an `ImageBitmap` inside `params`) instead
+   * of copying them.
+   */
   call(method, params, opts = {}) {
     if (this.closed) {
       return Promise.reject(
@@ -205,12 +256,15 @@ var BusEndpoint = class {
         );
       }, timeoutMs) : null;
       this.pending.set(id, { resolve, reject, timer });
-      this.send({
-        jsonrpc: "2.0",
-        id,
-        method,
-        ...params !== void 0 ? { params } : {}
-      });
+      this.send(
+        {
+          jsonrpc: "2.0",
+          id,
+          method,
+          ...params !== void 0 ? { params } : {}
+        },
+        opts.transfer
+      );
     });
   }
   close() {
@@ -229,9 +283,9 @@ var BusEndpoint = class {
     this.pending.clear();
     this.eventHandlers.clear();
   }
-  send(msg) {
+  send(msg, transfer) {
     if (this.closed) return;
-    this.port.post(wrap(msg));
+    this.port.post(wrap(msg), transfer);
   }
   onData(data) {
     const msg = unwrap(data);
@@ -305,6 +359,9 @@ export {
   EVENT_HANDSHAKE,
   matchesPattern,
   matchesAny,
+  boundsLonSpan,
+  boundsContainsLon,
+  normalizeBounds,
   wrap,
   unwrap,
   isJsonRpcMessage,
@@ -315,4 +372,4 @@ export {
   messagePort,
   BusEndpoint
 };
-//# sourceMappingURL=chunk-4W6N34SD.js.map
+//# sourceMappingURL=chunk-WV66EF3N.js.map

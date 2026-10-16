@@ -2,16 +2,21 @@
  * Plotter-extension **host** for the DR webapp (work doc #27): the
  * webapp is itself a chartplotter, so beside *providing* an extension
  * it also *hosts* them — discovering `plotterExtensions` manifests
- * served by any enabled server plugin and offering their widgets in
- * small grids anchored below the webapp's own floating panels.
+ * served by any enabled server plugin and offering their contributions:
+ * status widgets in small grids anchored below the webapp's own
+ * floating panels, and (chart-layer phase) map overlay layers drawn by
+ * the extension's headless background runtimes and composited above
+ * the charts, below the vessel.
  *
- * v1 surface (Plotter Extensions API v1): capabilities `widgets`,
+ * Host surface (Plotter Extensions API v1): capabilities `widgets`,
  * `panels.iframe` (configuration panels), `signalk.stream`,
- * `signalk.put`. Widget cells reuse the webapp's visual language
- * (translucent panel + corner brackets from dr-theme.js) so hosted
- * widgets sit in the same frame as `.dr-tools`/`.dr-gps`; the
- * extension's own content stays inside its iframe and is
- * extension-owned.
+ * `signalk.put`, `background.iframe` (headless runtimes),
+ * `overlays.image` (map layers), `map` (viewport read/drive), `units`
+ * (preferred units) and `buttons` (mapToolbar entries). Widget cells
+ * reuse the webapp's visual language (translucent panel + corner
+ * brackets from dr-theme.js) so hosted widgets sit in the same frame
+ * as `.dr-tools`/`.dr-gps`; the extension's own content stays inside
+ * its iframe and is extension-owned.
  *
  * The wire protocol is `vendor/plotterext-bus` (host entry):
  * JSON-RPC 2.0 in a `plotterExt/1` envelope over postMessage, origin
@@ -26,9 +31,11 @@
  */
 
 import * as core from "./dr-ext-host-core.js";
+import { OVERLAY_METHODS } from "./dr-ext-host-overlays.js";
 import { THEME_CSS } from "./dr-theme.js";
 import {
   HostConnection,
+  parsePublishParams,
   RPC_ERRORS,
   RpcError,
 } from "./vendor/plotterext-bus/host.js";
@@ -48,20 +55,22 @@ const CELL_CSS = "clamp(96px, 13vw, 160px)";
 
 /** Baseline sandbox for every extension iframe: fault containment,
  * not an adversarial boundary (install time is the trust decision). */
-const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms";
+const IFRAME_SANDBOX = core.IFRAME_SANDBOX;
 
 /**
  * A live extension context: one sandboxed iframe plus its bus
- * connection and the identity the handshake reports.
+ * connection and the identity the handshake reports. Widget contexts
+ * live in grid cells, panel contexts in dialogs, background contexts
+ * are headless (hidden) frames running extension runtimes.
  *
  * @typedef {object} ExtContext
- * @property {"widget"|"panel"} kind
+ * @property {"widget"|"panel"|"background"} kind
  * @property {string} extId
- * @property {string} id - widget or panel manifest-local id
+ * @property {string} id - widget, panel or background manifest-local id
  * @property {string|null} instanceId - widget placement id (widgets)
  * @property {string|null} targetInstance - configured widget (config panels)
  * @property {string|null} targetWidget
- * @property {object|null} manifestEntry - the widget/panel manifest entry
+ * @property {object|null} manifestEntry - the widget/panel/background entry
  * @property {HTMLIFrameElement} iframe
  * @property {HTMLDialogElement|null} dialog - persistent chrome (panels)
  * @property {HostConnection|null} conn
@@ -77,6 +86,11 @@ export class PlotterExtHost {
    * @param {object} opts.stream - the DrSignalkStream singleton
    * @param {Node} opts.mount - where dialogs are appended (the dr-app
    *   shadow root, so the app's dialog/theme styles apply)
+   * @param {() => object|null} [opts.getMap] - the Leaflet map once
+   *   the chart exists (dr-app wires it to `<dr-map-view>`); null
+   *   until then — the overlay machinery no-ops without a chart
+   * @param {{depth: string}} [opts.units] - the user's preferred units
+   *   (`units.get`)
    * @param {Storage} [opts.storage]
    * @param {(url: string, init?: object) => Promise<Response>} [opts.fetchImpl]
    * @param {string} [opts.origin]
@@ -84,10 +98,13 @@ export class PlotterExtHost {
   constructor(opts) {
     this.stream = opts.stream;
     this.mount = opts.mount;
+    this.getMap = opts.getMap ?? (() => null);
+    this.units = opts.units ?? { depth: "m" };
     this.storage = opts.storage ?? globalThis.localStorage;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     this.origin = opts.origin ?? globalThis.location?.origin ?? "";
     this.stateStore = new core.StateStore(this.storage);
+    this.overlayStore = new core.OverlayStateStore(this.storage);
     this.pathReg = new core.PathRefRegistry();
 
     /** @type {Map<string, object>} compatible extId → filtered bundle */
@@ -98,13 +115,34 @@ export class PlotterExtHost {
     this.widgetCtxs = new Map();
     /** @type {Map<string, ExtContext>} panel key (ext/panelId) → ctx */
     this.panelCtxs = new Map();
+    /** @type {Map<string, ExtContext>} background key (ext/bgId) → ctx */
+    this.bgCtxs = new Map();
     /** @type {Set<ExtContext>} every live context */
     this.allCtxs = new Set();
+    /** @type {Map<string, Map<string, object>>} extId → overlayId → spec */
+    this.overlaySpecs = new Map();
+    /** @type {Map<string, object>} overlayKey → frame gate state */
+    this.overlayGates = new Map();
+    /** @type {Map<string, {image: ImageBitmap, extent: number[]}>}
+     * overlayKey → latest accepted frame (the host owns the bitmap) */
+    this.overlayFrames = new Map();
+    /** @type {Map<string, number>} overlayKey → request retry timer */
+    this.overlayRetries = new Map();
+    /** @type {number} overlay request id sequence */
+    this.overlaySeq = 0;
+    /** @type {HTMLCanvasElement|null} composite canvas (map pane) */
+    this.overlayCanvas = null;
+    /** @type {boolean} map event handlers attached? */
+    this.mapHooked = false;
     /** @type {{ctx: ExtContext|null, dialog: HTMLDialogElement,
      *          instanceId: string}|null} */
     this.openConfig = null;
     /** @type {HTMLDialogElement|null} */
     this.pickerDialog = null;
+    /** @type {HTMLDialogElement|null} plugin-layers dialog */
+    this.layersDialog = null;
+    /** @type {object|null} the control div added to the map */
+    this.mapControl = null;
     /** Discovery never succeeded yet? */
     this.discovered = false;
     this.pollTimer = null;
@@ -150,13 +188,17 @@ export class PlotterExtHost {
   }
 
   /**
-   * Stops polling (page teardown).
+   * Stops polling (page teardown) and drops overlay retry timers.
    *
    * @returns {void}
    */
   stop() {
     if (this.pollTimer != null) clearInterval(this.pollTimer);
     this.pollTimer = null;
+    for (const timer of this.overlayRetries.values()) {
+      clearTimeout(timer);
+    }
+    this.overlayRetries.clear();
   }
 
   /**
@@ -242,6 +284,18 @@ export class PlotterExtHost {
         }
       }
     }
+
+    // Chart layers: reconcile background runtimes and overlay state
+    // with the fresh collection (chart-layer phase, work doc #27).
+    for (const extId of [...this.overlaySpecs.keys()]) {
+      if (!this.compatible.has(extId)) this.teardownOverlays(extId);
+    }
+    for (const [extId, ext] of this.compatible) {
+      this.syncOverlays(extId, ext);
+    }
+    this.renderButtons();
+    if (this.layersDialog?.open) this.renderLayersDialog();
+    this.viewChanged();
 
     this.renderAllAreas();
   }
@@ -552,6 +606,71 @@ export class PlotterExtHost {
       "ui.closePanel": async () => {
         if (ctx.kind !== "panel") throw notKind("panel", "closePanel");
         if (this.openConfig?.ctx === ctx) this.closeConfigDialog();
+        return {};
+      },
+      "units.get": async () => ({ units: { ...this.units } }),
+      "map.getView": async () => {
+        const view = this.currentView();
+        if (!view) throw notSupported("map");
+        return {
+          center: [view.centerLng, view.centerLat],
+          zoom: view.zoom,
+          bounds: this.currentBounds(),
+        };
+      },
+      "map.center": async (params) => {
+        const pos = params?.position;
+        if (
+          !Array.isArray(pos) ||
+          pos.length !== 2 ||
+          pos.some((n) => typeof n !== "number" || !Number.isFinite(n))
+        ) {
+          throw badParams("map.center requires position [lon, lat]");
+        }
+        const map = this.getMap?.();
+        if (!map) throw notSupported("map");
+        const zoom =
+          params.zoom === undefined || params.zoom === null
+            ? undefined
+            : params.zoom;
+        if (zoom !== undefined && typeof zoom !== "number") {
+          throw badParams("map.center zoom must be a number");
+        }
+        map.setView([pos[1], pos[0]], zoom);
+        return {};
+      },
+      "map.fitBounds": async (params) => {
+        const b = params?.bounds;
+        if (
+          !Array.isArray(b) ||
+          b.length !== 4 ||
+          b.some((n) => typeof n !== "number" || !Number.isFinite(n))
+        ) {
+          throw badParams("map.fitBounds requires bounds [w, s, e, n]");
+        }
+        const map = this.getMap?.();
+        if (!map) throw notSupported("map");
+        const [west, south, east, north] = b;
+        // Antimeridian form (west > east): unwrap east so Leaflet's
+        // bounds span the short way round.
+        const unwrappedEast = east < west ? east + 360 : east;
+        map.fitBounds([
+          [south, west],
+          [north, unwrappedEast],
+        ]);
+        return {};
+      },
+      "overlay.frame": async (params) => {
+        return this.acceptOverlayFrame(ctx, params);
+      },
+      "overlay.list": async () => this.listOverlays(ctx.extId),
+      "overlay.setVisibility": async (params) =>
+        this.setOverlaysState(ctx.extId, params, "visible"),
+      "overlay.setOpacity": async (params) =>
+        this.setOverlaysState(ctx.extId, params, "opacity"),
+      "events.publish": async (params) => {
+        const p = parsePublishParams(params);
+        this.publishEvent(ctx, p);
         return {};
       },
     };
@@ -893,6 +1012,11 @@ export class PlotterExtHost {
   }
 }
 
+// Map-overlay machinery (chart-layer phase): the methods live in
+// dr-ext-host-overlays.js and mount onto the prototype, keeping this
+// module's widget plumbing separate from the overlay surface.
+Object.assign(PlotterExtHost.prototype, OVERLAY_METHODS);
+
 /** Base class that also loads under Node (tests import the manager
  * from this module — only the element needs a browser). */
 const AreaBase = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
@@ -1113,6 +1237,17 @@ function notKind(kind, method) {
   return new RpcError(`${method} is a ${kind} affordance`, {
     code: RPC_ERRORS.HOST_ERROR,
     reason: `NOT_${kind.toUpperCase()}`,
+  });
+}
+
+/**
+ * @param {string} capability
+ * @returns {RpcError}
+ */
+function notSupported(capability) {
+  return new RpcError(`${capability} is not available on this host`, {
+    code: RPC_ERRORS.HOST_ERROR,
+    reason: "NOT_SUPPORTED",
   });
 }
 

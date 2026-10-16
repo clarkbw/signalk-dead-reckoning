@@ -57,8 +57,13 @@ test("compatibleExtensions: offers only satisfiable manifests", () => {
 });
 
 test("compatibleExtensions: unknown sections ignored, no-contribution dropped", () => {
+  // `frobnicators` is not a hosted section — entries in it are
+  // ignored per the spec, so an extension with only those is dropped.
   const collection = {
-    unknownSection: manifest({ widgets: undefined, buttons: [{ id: "b" }] }),
+    unknownSection: manifest({
+      widgets: undefined,
+      frobnicators: [{ id: "b" }],
+    }),
     empty: manifest({ widgets: [] }),
   };
   const compat = core.compatibleExtensions(collection, CAPS);

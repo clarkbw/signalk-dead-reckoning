@@ -5,7 +5,7 @@ import {
   RPC_ERRORS,
   RpcError,
   windowPort
-} from "./chunk-4W6N34SD.js";
+} from "./chunk-WV66EF3N.js";
 
 // src/extension.ts
 var ExtensionClient = class {
@@ -27,7 +27,10 @@ var ExtensionClient = class {
   hasCapability(id) {
     return this.handshake.capabilities.includes(id);
   }
-  /** Call a host API method. */
+  /**
+   * Call a host API method. `opts.transfer` moves the listed objects instead
+   * of copying them — only `overlay.frame` needs it in this version.
+   */
   call(method, params, opts) {
     return this.endpoint.call(method, params, opts);
   }
@@ -55,6 +58,20 @@ var ExtensionClient = class {
       await this.call("events.unsubscribe", { subscriptionId }).catch(() => {
       });
     };
+  }
+  /**
+   * Publish an event onto the bus (capability `events.publish`). The host
+   * delivers it to every context in `scope` whose subscriptions match —
+   * including this one — exactly as it delivers host events. `scope` defaults
+   * to `'all'` (any extension); `'extension'` keeps it to this extension's own
+   * contexts. Resolves once the host has delivered it; there is no reply.
+   */
+  async publish(topic, params, scope) {
+    await this.call("events.publish", {
+      topic,
+      ...params !== void 0 ? { params } : {},
+      ...scope ? { scope } : {}
+    });
   }
   /** Host-persisted key/value state (see spec: State Storage). */
   state = {
@@ -153,9 +170,9 @@ var ExtensionClient = class {
    * order (all batch). It does not create, add, or delete chart sources. Follow
    * changes (from any origin, including the host's own chart controls) by
    * subscribing to `chart.**` events (`ChartVisibilityEvent` / `ChartOpacityEvent`
-   * / `ChartOrderEvent`) and re-reading `chart.list` where needed. As with every
-   * wrapper, a plain-JS extension can call `client.call('chart.list', …)`
-   * directly with no behavioural difference.
+   * / `ChartOrderEvent` / `ChartTimeEvent`) and re-reading `chart.list` where
+   * needed. As with every wrapper, a plain-JS extension can call
+   * `client.call('chart.list', …)` directly with no behavioural difference.
    */
   chart = {
     list: async () => {
@@ -170,6 +187,14 @@ var ExtensionClient = class {
     },
     setOrder: async (order) => {
       await this.call("chart.setOrder", { order });
+    },
+    /**
+     * Retarget time-varying charts to an ISO 8601 instant, or back to their
+     * live frame with `null` (sub-capability `charts.time`). Follow changes via
+     * the `chart.time` event (`ChartTimeEvent`).
+     */
+    setTime: async (ids, time) => {
+      await this.call("chart.setTime", { ids, time });
     }
   };
   /**
@@ -191,6 +216,111 @@ var ExtensionClient = class {
     }
   };
   /**
+   * Panel visibility (capability `panels.state`): the state of each of this
+   * extension's loaded panels. Follow changes with the `panel.state` event,
+   * which every context of the extension receives; subscribe first, then
+   * `list()`, so no change is missed. A plain-JS extension can call
+   * `client.call('ui.listPanels')` with no behavioural difference.
+   */
+  panels = {
+    list: async () => {
+      const r = await this.call("ui.listPanels");
+      return r.panels;
+    }
+  };
+  /**
+   * Map overlays. `list()`, `setVisibility()` and `setOpacity()` apply to both
+   * kinds, and the host reports visibility with `overlay.state`
+   * (`OverlayStateEvent`).
+   *
+   * Image overlays (capability `overlays.image`): map layers this extension's
+   * background runtime draws. The host asks for frames with the
+   * `overlay.request` event (`OverlayRequestEvent`); the runtime answers each
+   * request with `frame()`, keeping one frame in flight. `frame()` transfers
+   * `image`, so the caller no longer owns it afterwards. A plain-JS extension
+   * can call `client.call('overlay.frame', params, { transfer: [image] })`
+   * with no behavioural difference.
+   *
+   * Data overlays (capability `overlays.data`): map layers the host draws from
+   * the extension's data and MapLibre style. `refresh()`, `setData()`,
+   * `setLayer()` and `setState()` change one while it is shown.
+   */
+  overlays = {
+    list: async () => {
+      const r = await this.call("overlay.list");
+      return r.overlays;
+    },
+    setVisibility: async (ids, visible) => {
+      await this.call("overlay.setVisibility", { ids, visible });
+    },
+    setOpacity: async (ids, opacity) => {
+      await this.call("overlay.setOpacity", { ids, opacity });
+    },
+    frame: async (params) => {
+      return await this.call("overlay.frame", params, {
+        transfer: [params.image]
+      });
+    },
+    refresh: async (params) => {
+      await this.call("overlay.refresh", params);
+    },
+    setData: async (params) => {
+      await this.call("overlay.setData", params);
+    },
+    setLayer: async (params) => {
+      await this.call("overlay.setLayer", params);
+    },
+    setState: async (overlayId, values) => {
+      await this.call("overlay.setState", { overlayId, values });
+    }
+  };
+  /**
+   * Floating windows (capability `windows`): show one of this extension's
+   * iframe panels in a window over the chart. Geometry is a request — read the
+   * actual `bounds` from the returned `WindowState`, and follow changes with
+   * the `window.bounds` / `window.state` / `window.closed` events. Windows
+   * belong to the extension, so any of its contexts may manage them; in a
+   * `window` context, `update` / `focus` / `close` default to the window
+   * itself when `windowId` is left out. A plain-JS extension can call
+   * `client.call('ui.openWindow', …)` and friends directly with no
+   * behavioural difference.
+   */
+  windows = {
+    open: async (params) => {
+      return await this.call("ui.openWindow", params);
+    },
+    update: async (params) => {
+      return await this.call("ui.updateWindow", params);
+    },
+    focus: async (windowId) => {
+      await this.call("ui.focusWindow", windowId === void 0 ? {} : { windowId });
+    },
+    close: async (windowId) => {
+      await this.call("ui.closeWindow", windowId === void 0 ? {} : { windowId });
+    },
+    list: async () => {
+      const r = await this.call("ui.listWindows");
+      return r.windows;
+    }
+  };
+  /**
+   * Apply a stored resource group to the host's display (capability
+   * `resourceGroups`). Resolves to `{ applied }` — the types the host made a
+   * best-effort attempt to carry out; a type it did not act on is omitted.
+   * Follow applies from any origin (including the user's own group picker) via
+   * the `resourceGroup.applied` event (`ResourceGroupAppliedEvent`). Group CRUD
+   * is not here: use the server's resources API (`/resources/groups`). A
+   * plain-JS extension can call `client.call('resourceGroup.apply', { id })`
+   * directly with no behavioural difference.
+   */
+  resourceGroup = {
+    apply: async (id) => {
+      return await this.call("resourceGroup.apply", {
+        id
+      });
+    }
+  };
+  /**
    * The host's chart viewport (capability `map`). Read the current
    * `{ center, zoom, bounds }`, drive it, and follow it by subscribing to the
    * `map.view` event (`MapViewEvent`), which carries the same shape and fires
@@ -209,6 +339,11 @@ var ExtensionClient = class {
         ...typeof zoom === "number" ? { zoom } : {}
       });
     },
+    /**
+     * Fit the chart to `[west, south, east, north]`. A box crossing the
+     * antimeridian may be given as `west > east` (the API's form) or unwrapped
+     * (`east` past 180); the host fits it the short way round.
+     */
     fitBounds: async (bounds) => {
       await this.call("map.fitBounds", { bounds });
     }
@@ -264,4 +399,4 @@ export {
   ExtensionClient,
   connectExtension
 };
-//# sourceMappingURL=chunk-7XRFPDQL.js.map
+//# sourceMappingURL=chunk-WWNNVR3K.js.map
