@@ -86,21 +86,28 @@ const ZERO_CURRENT = { setTrue: 0, drift: 0, tier: 5 };
  * current" is no longer a reachable live configuration.
  *
  * @param {object[]} rows - filled rows
+ * @param {object} [opts]
+ * @param {number|null} [opts.stopAfterMs=null] - when set, GPS fixes after
+ *   this timestamp stop feeding the state (simulated GPS loss); snapshots
+ *   keep being taken, so the carried current decays with its real time
+ *   constant and lapses to unresolved after the TTL
  * @returns {{tMs: number, setTrue: number, drift: number}[]}
  */
-function derivedCurrentSeries(rows) {
+function derivedCurrentSeries(rows, { stopAfterMs = null } = {}) {
   const st = createDerivedCurrentState();
   const out = [];
   for (const row of rows) {
-    updateDerivedCurrent(st, {
-      tMs: row.tMs,
-      gps: row.position,
-      stwKn: typeof row.stwMs === "number" ? msToKnots(row.stwMs) : null,
-      headingTrueDeg:
-        typeof row.headingTrueRad === "number"
-          ? normalizeDeg360(radToDeg(row.headingTrueRad))
-          : null,
-    });
+    if (stopAfterMs == null || row.tMs <= stopAfterMs) {
+      updateDerivedCurrent(st, {
+        tMs: row.tMs,
+        gps: row.position,
+        stwKn: typeof row.stwMs === "number" ? msToKnots(row.stwMs) : null,
+        headingTrueDeg:
+          typeof row.headingTrueRad === "number"
+            ? normalizeDeg360(radToDeg(row.headingTrueRad))
+            : null,
+      });
+    }
     const snap = derivedCurrentSnapshot(st, row.tMs);
     out.push({
       tMs: row.tMs,
@@ -554,21 +561,38 @@ function runReplay(rows, opts = {}) {
           : null
     : null;
   const derived = derivedCurrentSeries(rows);
-  const derivedProvider = (_position, tMs) => {
+  const seriesProvider = (series) => (_position, tMs) => {
     // Nearest causal sample (series is time-sorted).
     let lo = 0;
-    let hi = derived.length - 1;
+    let hi = series.length - 1;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (derived[mid].tMs < tMs) lo = mid + 1;
+      if (series[mid].tMs < tMs) lo = mid + 1;
       else hi = mid;
     }
-    const s = derived[lo];
+    const s = series[lo];
     if (!s || Math.abs(s.tMs - tMs) > 120000) return null;
-    return { setTrue: s.setTrue, drift: s.drift };
+    // tier 2: the derived current IS the §6.2 tier-2 source; without the
+    // tier field training.js's eligibility gate reads it as unresolved.
+    return { setTrue: s.setTrue, drift: s.drift, tier: 2 };
   };
+  const derivedProvider = seriesProvider(derived);
 
   const variants = [makeVariant({ key: "cold", train: false })];
+  if (opts.blindFromMs != null) {
+    // GPS lost mid-passage: the resolver keeps snapshotting the carried
+    // state, which decays (24 h time constant) and lapses to tier 5
+    // after its TTL — the honest "navigation without GPS" simulation.
+    variants.push(
+      makeVariant({
+        key: "blind",
+        train: false,
+        currentProvider: seriesProvider(
+          derivedCurrentSeries(rows, { stopAfterMs: opts.blindFromMs }),
+        ),
+      }),
+    );
+  }
   variants.push(
     makeVariant({
       key: "derived",
@@ -684,6 +708,10 @@ const VARIANT_STYLE = {
   },
   scud: { label: "DR cold + SCUD current", color: "#c084fc" },
   scudLearn: { label: "DR learning + SCUD current", color: "#facc15" },
+  blind: {
+    label: "DR blind (tier-2 carried current, GPS lost)",
+    color: "#f87171",
+  },
 };
 
 /**
@@ -1049,6 +1077,7 @@ async function main(argv) {
     out: path.join(os.homedir(), "tmp", "dr-replay"),
     train: true,
     scud: true,
+    blindFromMs: null,
     stwScale: null,
     resolutionSec: 10,
     chunkHours: 6,
@@ -1063,10 +1092,18 @@ async function main(argv) {
     else if (a === "--chunk-hours") opts.chunkHours = Number(argv[++i]);
     else if (a === "--no-train") opts.train = false;
     else if (a === "--no-scud") opts.scud = false;
-    else if (a === "--stw-scale") opts.stwScale = Number(argv[++i]);
+    else if (a === "--blind-from") {
+      const ms = Date.parse(argv[++i]);
+      if (!Number.isFinite(ms)) {
+        console.error(`Invalid --blind-from timestamp`);
+        process.exitCode = 1;
+        return;
+      }
+      opts.blindFromMs = ms;
+    } else if (a === "--stw-scale") opts.stwScale = Number(argv[++i]);
     else {
       console.error(
-        `Usage: node tools/replay-passage.js [--url URL] [--from ISO] [--to ISO] [--out DIR] [--no-train] [--no-scud]`,
+        `Usage: node tools/replay-passage.js [--url URL] [--from ISO] [--to ISO] [--out DIR] [--no-train] [--no-scud] [--blind-from ISO]`,
       );
       process.exitCode = 1;
       return;
@@ -1125,6 +1162,7 @@ async function main(argv) {
   const { samples, variants } = runReplay(rows, {
     train: opts.train,
     scudGrid,
+    blindFromMs: opts.blindFromMs,
   });
   const summary = summarize(samples);
   const hourly = hourlyBuckets(samples);
@@ -1158,6 +1196,9 @@ async function main(argv) {
         )
         .join("") +
       `\nMean implied current: ${c.setTrue == null ? "—" : `${c.setTrue.toFixed(0)}° @ ${c.driftKn.toFixed(2)} kn`} over ${c.sampleCount} underway samples` +
+      (opts.blindFromMs != null
+        ? `\nBlind variant: GPS lost at ${new Date(opts.blindFromMs).toISOString()} — carried current decays (24 h τ) and lapses after its TTL`
+        : "") +
       (opts.train
         ? `\nLearning variants: ${variants.find((v) => v.key === "learn")?.matrix.count()} bins (zero-current) / ${variants.find((v) => v.key === "scudLearn")?.matrix?.count() ?? "—"} bins (SCUD-current)`
         : ""),

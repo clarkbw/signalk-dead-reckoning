@@ -301,6 +301,10 @@ test("leeway synthetic: the learning variant absorbs a 4° course offset", () =>
   // uncorrected): the cold variant walks off cross-track, the learning
   // variant must lock onto the ground track within minutes. A constant
   // 10° heel rides along so the roll → heelDeg → bin path is exercised.
+  // With the §6.2 gate live, the tier-2 derived current resolves here
+  // and absorbs most of the offset itself (a cross-track drift IS a
+  // current observation); training learns the small residual, so the
+  // bound is looser than the pure-training absorption it once measured.
   const rows = syntheticRows(
     720,
     (_i, prev) => destinationPoint(prev, 94, (STW_KN * DT_S) / 3600),
@@ -314,9 +318,12 @@ test("leeway synthetic: the learning variant absorbs a 4° course offset", () =>
     `cold div ${last.cold.divNm}`,
   );
   assert.ok(
-    last.learn.divNm < expectedCrossTrack * 0.2,
+    last.learn.divNm < expectedCrossTrack * 0.5,
     `learn div ${last.learn.divNm}`,
   );
+  // …and it must actually beat the untrained baseline, not just the
+  // bound (guards against the bound drifting loose).
+  assert.ok(last.learn.divNm < last.cold.divNm / 4, `learn vs cold`);
 });
 
 test("report plot: a track crossing the antimeridian renders contiguous", () => {

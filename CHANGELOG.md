@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The GPS/override bar no longer sits in the middle of a phone screen** (`public/dr-ext-host.js`): on the ≤600 px phone layout the top band stacks vertically, and every `<dr-ext-widget-area>` reserves its full 2×2 widget footprint even while empty — so the empty top-left area inflated the tools column to ~323 px and pushed the GPS status + Engage OVERRIDE panel down to y≈337 of an 844 px viewport, mid-screen. The reservation exists only for the chart context-menu placement hit-test, so it now collapses inside the area's own phone media query; a placed grid still sizes itself through its rows, and placement simply isn't offered on an empty phone area. Phone top band drops from ~656 px to ~260 px with the GPS bar back at the top. `doc/dr-mobile.png` regenerated with the fixed layout.
+
+### Changed
+- **Passage replay gains a blind variant — the GPS-loss backtest the tier-2 circularity demanded** (`tools/replay-passage.js`): the derived tier-2 current is fitted to the very GPS track a replay scores against, so "derived beats everything" over a fully-GPS-fed passage is a tautology, not a result. The new `--blind-from ISO` variant simulates the actual use case — GPS dies mid-passage: fixes stop feeding the derived-current state at the cutoff while snapshots keep being taken, so the shadow boat navigates on the carried EWMA current decaying at its 24 h time constant and lapsing to tier 5 after the TTL, with divergence still scored against the hidden GPS track. First blind run on the Niue→Vava'u passage (2026-09-11→14, 253 nm, GPS lost at hour 24 of 60): DR stayed within ~10 nm of truth through the entire 24 h carry window, then degraded at ~1 nm/h once the current support vanished — 22.5 nm final vs 10.0 nm with GPS live and 38.2 nm cold. Also fixed on the way: the derived-current provider returned no `tier` field, so the §6.2 training gate read every tick as unresolved and the learning variant silently never trained (0 matrix bins, learn ≡ derived); it now stamps `tier: 2`, the leeway-synthetic test's threshold is recalibrated to the post-gate semantics (the old bound was met by the current, not by learning), and the `scudLearn` variant is vestigial by design — the gate deliberately blocks training on model currents.
+
 ## [0.13.4] - 2026-10-16
 
 ### Added

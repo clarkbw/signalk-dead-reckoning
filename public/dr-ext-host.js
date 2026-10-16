@@ -925,6 +925,18 @@ export class DrExtWidgetArea extends AreaBase {
         min-width: calc(2 * ${CELL_CSS} + 6px);
         min-height: calc(2 * ${CELL_CSS} + 6px);
       }
+      /* On phones the top band stacks vertically (dr-app's ≤600px
+         layout), so an empty area's reserved 2×2 footprint inflates
+         the tools column and pushes the GPS/override panel into
+         mid-screen. The reservation exists only for the chart
+         context-menu placement hit-test — collapse it on narrow
+         viewports; a placed grid still sizes itself via its rows. */
+      @media (max-width: 600px) {
+        :host {
+          min-width: 0;
+          min-height: 0;
+        }
+      }
       .grid {
         display: none; /* only with placements */
         grid-template-columns: repeat(2, ${CELL_CSS});

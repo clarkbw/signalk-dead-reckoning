@@ -369,6 +369,23 @@ test("dr-app: widget areas sit below the app's own top panels", () => {
   );
 });
 
+test("dr-ext-host: the empty-area footprint reservation collapses on phones", () => {
+  // The 2×2 min-size reservation exists only so the chart context
+  // menu can hit-test placement targets. On the phone layout the top
+  // band stacks vertically, so a reserved-but-empty area inflates the
+  // tools column and pushes the GPS/override panel into mid-screen
+  // (the bar landed at y≈337 of 844). The ≤600px media query in the
+  // area's own shadow styles must drop the reservation; a placed grid
+  // still sizes itself through its rows.
+  const host = hostSrc.match(
+    /:host \{[\s\S]*?min-height: calc\(2 \* \$\{CELL_CSS\} \+ 6px\);\s*\}\s*\/\*[\s\S]*?\*\/\s*@media \(max-width: 600px\) \{\s*:host \{\s*min-width: 0;\s*min-height: 0;\s*\}\s*\}/,
+  );
+  assert.ok(
+    host,
+    "empty-area min-size reservation is dropped inside the phone media query",
+  );
+});
+
 test("dr-ext-host: sandboxed same-origin iframes, origin-pinned bus", () => {
   assert.match(
     hostSrc,
