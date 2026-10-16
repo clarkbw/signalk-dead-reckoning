@@ -1,8 +1,12 @@
 # Signal K Dead Reckoning
 
-An offline-first dead reckoning and sensor fusion engine for Signal K that maintains a continuously computed "shadow boat" position from water-track sensors (speed through water, compass heading, and learned leeway and current corrections), so you always have a navigational fallback when GPS becomes unreliable — whether from jamming, spoofing, or plain receiver failure. While GPS is trusted, the engine learns vessel-specific calibration corrections against ground truth and watches for GPS anomalies; when it isn't, the same learned model keeps the dead-reckoned position, its uncertainty polygon, and a water-track log going. Fixes from celestial sights, compass bearings, and vertical angles are entered through a unified pipeline and can snap dead reckoning back on track, with optional write-through to `signalk-logbook`.
+An offline-first dead reckoning and sensor fusion engine for Signal K that maintains a continuously computed "shadow boat" position from water-track sensors (speed through water, compass heading, and learned leeway and current corrections), so you always have a navigational fallback when GPS becomes unreliable — whether from jamming, spoofing, or plain receiver failure. While GPS is trusted, the engine learns vessel-specific calibration corrections against ground truth and watches for GPS anomalies; when it isn't, the same learned model keeps the dead-reckoned position, its uncertainty polygon, and a water-track log going. Fixes from celestial sights, compass bearings, radar ranges, and vertical angles are entered through a unified pipeline and can snap dead reckoning back on track, with optional write-through to `signalk-logbook`.
 
 **Note:** This is just a toy. Make your own navigation calculations and decisions.
+
+## Why
+
+Planning for life without GPS is no longer hypothetical: the UK Maritime and Coastguard Agency's Guidance Note 719 ([reported by Yachting Monthly](https://www.yachtingmonthly.com/news/mca-tells-maritime-sector-to-plan-for-life-without-gps-106566), 1 Oct 2025) reports a marked increase in GNSS jamming and spoofing worldwide and asks mariners to review contingency arrangements, maintain resilient navigation practices, and practice navigating without satellite positioning — naming dead reckoning, visual bearings, and celestial fixing as valid methods. This plugin implements exactly that contingency for Signal K vessels: the fallback is always running, and the trusted-GPS period is spent training it.
 
 ## Requirements
 
@@ -30,8 +34,9 @@ Open the webapp from your Signal K server's *Web apps* menu. It shows the vessel
 
 **Entering fixes.** Open *⊕ Sight / LOP* and pick the method:
 
-* **Bearing** — compass bearing to a known object (lighthouse, tower) gives a line of position
+* **Bearing** — bearing to a known object (lighthouse, tower) gives a line of position; the instrument selector records whether it came from a hand-bearing compass or the radar
 * **Vert. Angle** — vertical angle to a known object of known height gives a circular position line
+* **Radar** — range to a known object gives a circular position line — the one ranging instrument that does not depend on GNSS. Range + bearing to the same object is the classic two-instrument radar fix. A range to an AIS target rests on the target's own GNSS-derived position, so under suspected interference prefer charted fixed objects
 * **Celestial** — sextant sight of the Sun, Moon, or an almanac star
 
 You can right-click an object on the map to pre-fill its coordinates. Sights can be entered with a stopwatch delay ("minutes ago") instead of clock time. Observations accumulate in the pending list; select two or more, *Preview selected* to resolve the candidate fix, then *Confirm fix* to snap dead reckoning to it. A single line of position can also be advanced to a later sight (running fix).
