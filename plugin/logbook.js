@@ -1,5 +1,6 @@
 /**
- * Logbook integration: write-through to `signalk-logbook` (SPEC §9.4, §9.5).
+ * Logbook integration: write-through to the `logentries` resource provider
+ * (e.g. `signalk-logbook`; SPEC §9.4, §9.5).
  *
  * `fixes` remains the canonical record; logbook entries are formatted
  * exports. Entries are written through the Signal K v2 Resources API
@@ -422,9 +423,11 @@ function composeObservationEntry(o) {
 
 /**
  * Creates a logbook write client over the Signal K v2 Resources API —
- * the in-process `app.resourcesApi` interface, with the `logentries`
- * provider registered by signalk-logbook. No REST, no tokens, no auth
- * of any kind: in-process plugin access passes no security middleware.
+ * the in-process `app.resourcesApi` interface, against whatever plugin
+ * registers a `logentries` resource provider (signalk-logbook is the
+ * reference implementation, not a requirement). No REST, no tokens, no
+ * auth of any kind: in-process plugin access passes no security
+ * middleware.
  *
  * @param {object} opts
  * @param {object} opts.resourcesApi - the server's resources API

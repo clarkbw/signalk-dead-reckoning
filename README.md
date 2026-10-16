@@ -1,6 +1,6 @@
 # Signal K Dead Reckoning
 
-An offline-first dead reckoning and sensor fusion engine for Signal K that maintains a continuously computed "shadow boat" position from water-track sensors (speed through water, compass heading, and learned leeway and current corrections), so you always have a navigational fallback when GPS becomes unreliable — whether from jamming, spoofing, or plain receiver failure. While GPS is trusted, the engine learns vessel-specific calibration corrections against ground truth and watches for GPS anomalies; when it isn't, the same learned model keeps the dead-reckoned position, its uncertainty polygon, and a water-track log going. Fixes from celestial sights, compass bearings, radar ranges, vertical angles, and horizontal sextant angles are entered through a unified pipeline and can snap dead reckoning back on track, with optional write-through to `signalk-logbook`.
+An offline-first dead reckoning and sensor fusion engine for Signal K that maintains a continuously computed "shadow boat" position from water-track sensors (speed through water, compass heading, and learned leeway and current corrections), so you always have a navigational fallback when GPS becomes unreliable — whether from jamming, spoofing, or plain receiver failure. While GPS is trusted, the engine learns vessel-specific calibration corrections against ground truth and watches for GPS anomalies; when it isn't, the same learned model keeps the dead-reckoned position, its uncertainty polygon, and a water-track log going. Fixes from celestial sights, compass bearings, radar ranges, vertical angles, and horizontal sextant angles are entered through a unified pipeline and can snap dead reckoning back on track, with optional write-through to the vessel's logbook (any Signal K `logentries` resource provider, such as `signalk-logbook`).
 
 **Note:** This is just a toy. Make your own navigation calculations and decisions.
 
@@ -23,7 +23,7 @@ Planning for life without GPS is no longer hypothetical: the UK Maritime and Coa
    * Wind data — used by the calibration model and the polar speed fallback
 3. Just sail. While GPS is reliable and you're under sail (propulsion stopped), the engine continuously learns vessel-specific leeway and speed-loss corrections against GPS ground truth. There is nothing to activate: the "shadow boat" runs at all times, and the uncertainty polygon tightens over a season as the calibration bins fill up. Early on, expect conservative uncertainty estimates.
 4. Optional integrations, configured in the plugin settings:
-   * `signalk-logbook` — write confirmed fixes and maneuvers to the vessel's logbook
+   * `signalk-logbook` (or any other `logentries` resource provider) — writes confirmed fixes and maneuvers to the vessel's logbook
    * `signalk-polar-performance-plugin` — polar-derived speed when the paddlewheel is fouled or silent
    * `@meri-imperiumi/signalk-autostate` — keeps the navigation state (anchored, sailing, motoring) accurate, which gates training
    * Signal K Weather API — point-forecast current vectors for the DR solution

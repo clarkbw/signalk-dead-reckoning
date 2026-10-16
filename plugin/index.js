@@ -792,7 +792,7 @@ module.exports = (app) => {
         },
         "logbook.enabled": {
           type: "boolean",
-          title: "Write fixes and maneuvers to signalk-logbook",
+          title: "Write fixes and maneuvers to the vessel's logbook",
           default: DEFAULT_CONFIG.logbook.enabled,
         },
         "logbook.retryBackoffMs": {
@@ -2216,8 +2216,8 @@ module.exports = (app) => {
   }
 
   /**
-   * Initializes the logbook write path when enabled: probes the
-   * `logentries` resource provider (registered by signalk-logbook) with
+   * Initializes the logbook write path when enabled: probes for any
+   * registered `logentries` resource provider (e.g. signalk-logbook) with
    * a minimal listing — a cheap, complete-window query under the
    * contract's "no silent windows" rule. Plugin start order isn't
    * guaranteed, so a missing provider isn't fatal: writes queue (SQLite)
@@ -2247,7 +2247,7 @@ module.exports = (app) => {
         logbookProbing = false;
         logbook = null;
         setStatus(
-          "signalk-logbook logentries provider not available — entries queued",
+          "No logentries resource provider available — logbook entries queued",
         );
         scheduleLogbookRetry();
       });

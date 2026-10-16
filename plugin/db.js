@@ -638,7 +638,8 @@ function getDeviationRateStats(db, q = {}) {
 }
 
 /**
- * Marks a `fixes` row as written to the signalk-logbook, storing the
+ * Marks a `fixes` row as written to the logbook (`logentries` resource),
+ * storing the
  * entry reference (its datetime key). A failed write leaves the row
  * unmarked — visible in `fixes`, never blocking the fix flow.
  *
