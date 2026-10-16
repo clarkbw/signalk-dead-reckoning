@@ -6,13 +6,14 @@ An offline-first dead reckoning and sensor fusion engine for Signal K that maint
 
 ## Why
 
-Planning for life without GPS is no longer hypothetical: the UK Maritime and Coastguard Agency's Guidance Note 719 ([reported by Yachting Monthly](https://www.yachtingmonthly.com/news/mca-tells-maritime-sector-to-plan-for-life-without-gps-106566), 1 Oct 2025) reports a marked increase in GNSS jamming and spoofing worldwide and asks mariners to review contingency arrangements, maintain resilient navigation practices, and practice navigating without satellite positioning — naming dead reckoning, visual bearings, and celestial fixing as valid methods. This plugin implements exactly that contingency for Signal K vessels: the fallback is always running, and the trusted-GPS period is spent training it.
+Planning for life without GPS is no longer hypothetical: the UK Maritime and Coastguard Agency's [Guidance Note 719](https://www.gov.uk/government/publications/mgn-719-mf-operating-in-gnss-denied-and-degraded-environments/mgn-719-mf-operating-in-gnss-denied-and-degraded-environments) ([reported by Yachting Monthly](https://www.yachtingmonthly.com/news/mca-tells-maritime-sector-to-plan-for-life-without-gps-106566), 1 Oct 2026) reports a marked increase in GNSS jamming and spoofing worldwide and asks mariners to review contingency arrangements, maintain resilient navigation practices, and practice navigating without satellite positioning — naming dead reckoning, visual bearings, and celestial fixing as valid methods. This plugin implements a contingency for Signal K vessels.
 
 ## Requirements
 
 * This plugin installed and configured
 * Some chart source available to Signal K
 * Hand bearing compass and/or sextant
+* A heading source independent of GNSS — a fluxgate or inertial compass feeding `navigation.headingMagnetic`, not a satellite (GNSS) compass. A satellite compass shares the jamming and spoofing failure mode of the position fix, so a vessel whose only heading source is satellite-derived cannot dead-reckon through GNSS denial. Be careful checking this: on N2K networks a single physical device often provides both compass and position data, and display list entries do not necessarily reflect that (a device may publish both PGN 127257 heading and PGN 129029 position under one source)
 
 ## Getting started
 
