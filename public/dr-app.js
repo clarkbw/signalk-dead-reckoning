@@ -140,10 +140,7 @@ template.innerHTML = /* html */ `
        look, the glance gets the gist. */
     .dr-status {
       margin: 0;
-      max-width: 22rem;
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
       font-family: ui-monospace, "Fira Code", monospace;
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -158,8 +155,7 @@ template.innerHTML = /* html */ `
       --theme-color: var(--color-green);
       color: var(--color-green);
     }
-    .dr-status.alert,
-    .dr-status.retrying {
+    .dr-status.alert {
       --theme-color: var(--color-red);
       color: var(--color-red);
       font-weight: 600;
@@ -179,29 +175,44 @@ template.innerHTML = /* html */ `
       background: var(--color-teal);
       color: var(--bg-base);
     }
-    /* Failover control — top-right panel, inline with the status
-       badge: one row, same vertical size as the tools panel. Alternate-
-       power semantics: orange, red when engaged (DR authoritative).
-       The button keeps its minimum width — SPEC §14.1: prominent,
-       always human-initiated. */
+    /* Stream link badge — [ONLINE]/[OFFLINE], color-coded; the full
+       connection detail (reconnecting…, which endpoint) rides the
+       badge's tooltip. */
+    .dr-link {
+      font-family: ui-monospace, "Fira Code", monospace;
+      font-size: 0.75rem;
+      color: var(--color-orange);
+    }
+    .dr-link.online {
+      color: var(--color-green);
+    }
+    .dr-link.offline {
+      color: var(--color-red);
+      font-weight: 600;
+    }
+    /* Failover control — top-right panel, one compact badge row:
+       [ONLINE] DR[ON] GNSS[OK] [OVERRIDE]. Alternate-power semantics:
+       orange, red when engaged (DR authoritative). The button stays
+       prominent (SPEC §14.1: always human-initiated) without eating
+       the top bar. */
     .dr-gps {
       display: flex;
       flex-direction: row;
       align-items: center;
       justify-content: flex-end;
-      gap: 0.75rem;
+      gap: 0.5rem;
       flex-wrap: wrap;
     }
     .dr-override {
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      gap: 0.75rem;
+      gap: 0.4rem;
       flex-wrap: wrap;
     }
     .dr-override button {
       --theme-color: var(--color-orange);
-      min-width: 13rem;
+      min-width: 5.5rem;
     }
     .dr-override button.engaged,
     .dr-override button.engaged:hover,
@@ -217,6 +228,9 @@ template.innerHTML = /* html */ `
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--text-muted);
+    }
+    .dr-override #dr-override-state.off {
+      color: var(--color-orange);
     }
     /* Pending-observations drawer: docked left, below the entry
        tools; the list scrolls inside, the panel never grows past the
@@ -357,7 +371,6 @@ template.innerHTML = /* html */ `
       }
       .dr-status {
         font-size: 0.7rem;
-        max-width: 14rem;
       }
       .dr-override button {
         min-width: 11rem;
@@ -421,19 +434,20 @@ template.innerHTML = /* html */ `
       <div class="dr-top-col">
         <section class="sk-floating dr-tools">
           <button id="btn-sight">⊕ Sight / LOP</button>
-          <button id="btn-coord-fix" title="Confirm a fix at coordinates — prefilled from the current GNSS position, editable for offline/known-position fixes">⊙ Fix at coordinates</button>
+          <button id="btn-coord-fix" title="Fix at coordinates — prefilled from the current GNSS position, editable for offline/known-position fixes">⊙ FIX AT</button>
           <button id="btn-pending" aria-expanded="false" aria-controls="dr-pending-drawer" hidden>◧ Pending</button>
         </section>
         <dr-ext-widget-area anchor="top-left"></dr-ext-widget-area>
       </div>
       <div class="dr-top-col dr-top-col-right">
         <section class="sk-floating dr-gps">
-          <div class="dr-status" id="dr-status-panel">
-            <span id="dr-status-text">Connecting to Signal K…</span>
+          <span class="dr-link" id="dr-link" title="Connecting to Signal K…">[CONNECTING…]</span>
+          <div class="dr-status" id="dr-status-panel" title="No dead-reckoning data">
+            <span id="dr-status-text">DR[—]</span>
           </div>
           <div class="dr-override">
-            <button id="dr-override-btn">Engage OVERRIDE</button>
-            <span id="dr-override-state">NORMAL (GPS authoritative)</span>
+            <span id="dr-override-state" title="Normal — the GNSS fix is authoritative">GNSS[OK]</span>
+            <button id="dr-override-btn" title="Toggle DR-authoritative override — while engaged the dead-reckoned position steers the chart and the GNSS fix is not trusted">OVERRIDE</button>
           </div>
         </section>
         <dr-ext-widget-area anchor="top-right"></dr-ext-widget-area>
@@ -1994,18 +2008,21 @@ class DrApp extends HTMLElement {
   renderOverride(active) {
     if (!this.btn || !this.stateLabel) return;
     this.btn.classList.toggle("engaged", active);
-    this.btn.textContent = active ? "Release OVERRIDE" : "Engage OVERRIDE";
-    this.stateLabel.textContent = active
-      ? "OVERRIDE (DR authoritative)"
-      : "NORMAL (GPS authoritative)";
+    this.stateLabel.classList.toggle("off", active);
+    this.stateLabel.textContent = active ? "GNSS[OFF]" : "GNSS[OK]";
+    this.stateLabel.title = active
+      ? "Override engaged — the dead-reckoned position is authoritative; the GNSS fix is not trusted"
+      : "Normal — the GNSS fix is authoritative";
   }
 
   /**
-   * Renders the DR engine state — explains why the readout is empty
-   * when idle (moored, no speed/heading) so the user isn't left
-   * guessing.
+   * Renders the DR engine state as a compact badge (DR[ON], DR[IDLE],
+   * DR[FOULED]…) with the full explanatory text on the badge's
+   * tooltip — the helm reads the row at a glance and hovers for the
+   * why.
    *
-   * @param {{status: string, reason?: string}|null} value
+   * @param {{status: string, reason?: string, moving?: boolean,
+   *   fouled?: boolean, transient?: boolean}|null} value
    * @returns {void}
    */
   renderDrState(value) {
@@ -2013,43 +2030,54 @@ class DrApp extends HTMLElement {
     const text = this.shadowRoot.querySelector("#dr-status-text");
     if (!panel || !text) return;
     panel.classList.remove("idle", "underway", "alert", "transient");
-    if (!value) {
-      text.textContent = "No dead-reckoning data";
-      return;
+    let title = "No dead-reckoning data";
+    if (value) {
+      if (value.status === "idle") {
+        panel.classList.add("idle");
+        if (value.moving) panel.classList.add("alert");
+      } else if (value.status === "underway") {
+        panel.classList.add("underway");
+        if (value.fouled) panel.classList.add("alert");
+        else if (value.transient) panel.classList.add("transient");
+      } else if (value.status === "warm" && value.fouled) {
+        // The engine runs warm on a tied-up boat (SPEC §5) — muted,
+        // unless the speed sensor is crying wolf.
+        panel.classList.add("alert");
+      }
+      title =
+        vm.drStatusText({ ...value, navState: this.vesselNavState }) ?? title;
     }
-    if (value.status === "idle") {
-      panel.classList.add("idle");
-      if (value.moving) panel.classList.add("alert");
-    } else if (value.status === "underway") {
-      panel.classList.add("underway");
-      if (value.fouled) panel.classList.add("alert");
-      else if (value.transient) panel.classList.add("transient");
-    } else if (value.status === "warm") {
-      // Engine alive, boat tied up — muted, no status color crying wolf.
-      if (value.fouled) panel.classList.add("alert");
-    }
-    const next = vm.drStatusText({ ...value, navState: this.vesselNavState });
-    if (next != null) text.textContent = next;
+    text.textContent = vm.drStatusBadge(value);
+    panel.title = title;
   }
 
   /**
-   * Renders the stream link state so a dropped connection is visible
-   * immediately.
+   * Renders the stream link state as a compact [ONLINE]/[OFFLINE]
+   * badge (color-coded) with the full connection detail on its
+   * tooltip — a dropped connection is visible immediately without
+   * eating the top bar.
    *
    * @param {{state: "connecting"|"open"|"retrying"}} status
    * @returns {void}
    */
   renderLinkStatus(status) {
-    const panel = this.shadowRoot.querySelector("#dr-status-panel");
-    const text = this.shadowRoot.querySelector("#dr-status-text");
-    if (!panel || !text) return;
-    panel.classList.remove("retrying");
-    if (status.state === "connecting") {
-      text.textContent = "Connecting to Signal K…";
-    } else if (status.state === "retrying") {
-      panel.classList.add("retrying");
-      text.textContent = "Signal K link lost — reconnecting…";
-    } else if (status.state === "open") {
+    const link = this.shadowRoot.querySelector("#dr-link");
+    if (link) {
+      link.classList.remove("online", "offline");
+      if (status.state === "open") {
+        link.textContent = "[ONLINE]";
+        link.classList.add("online");
+        link.title = "Signal K stream connected";
+      } else if (status.state === "retrying") {
+        link.textContent = "[OFFLINE]";
+        link.classList.add("offline");
+        link.title = "Signal K link lost — reconnecting…";
+      } else {
+        link.textContent = "[CONNECTING…]";
+        link.title = "Connecting to Signal K…";
+      }
+    }
+    if (status.state === "open") {
       // Re-seed AIS static data on (re)connect (work doc #23) — names
       // and MMSIs don't ride position deltas.
       this.bootstrapAis();
@@ -2058,7 +2086,6 @@ class DrApp extends HTMLElement {
       // while offline) reappear without a page reload.
       this.fetchNotes();
     }
-    // "open" — let the DR state panel take over once data flows.
   }
 }
 

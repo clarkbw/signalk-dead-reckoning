@@ -712,6 +712,26 @@ export function drStatusText(s) {
 }
 
 /**
+ * Compact badge token for the DR engine state — the helm wants a
+ * glanceable top-bar row, not a sentence; the full drStatusText text
+ * rides the badge's tooltip.
+ *
+ * @param {{status: string, reason?: string, moving?: boolean,
+ *   fouled?: boolean, transient?: boolean}|null} s
+ * @returns {string} e.g. "DR[OK]", "DR[IDLE]", "DR[FOULED]"
+ */
+export function drStatusBadge(s) {
+  if (!s) return "DR[—]";
+  if (s.status === "idle") return s.moving ? "DR[STALE]" : "DR[IDLE]";
+  if (s.status === "underway") {
+    if (s.fouled) return "DR[FOULED]";
+    return s.transient ? "DR[TRANS]" : "DR[ON]";
+  }
+  if (s.status === "warm") return s.fouled ? "DR[FOULED]" : "DR[WARM]";
+  return "DR[—]";
+}
+
+/**
  * Short display label for the DR calculation method (SPEC §3.1). The
  * wire value stays the spec token (`inertial-paddlewheel` etc.); the
  * headline shows the watchkeeper-sized word for it.
