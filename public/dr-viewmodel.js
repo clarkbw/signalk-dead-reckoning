@@ -2926,17 +2926,28 @@ export function norm360(a) {
 
 /**
  * Shapes a Signal K v2 resources collection (`GET /resources/notes`)
- * into map render specs (work doc #30). Entries without a position
- * (region-only notes) are skipped for now — the chart plots points.
+ * into map render specs (work doc #30). One marker per positioned
+ * note — except notes whose region shape draws on the chart: a
+ * warning's region carries the true extent, and the paired note (same
+ * hash base, `*-area-` ids, href-linked) is its anchored detail, so
+ * the pair renders once. Passing no drawn set (or a note with no
+ * region href) keeps every positioned note.
  *
  * @param {object|null|undefined} collection - `{ [id]: note }` map
+ * @param {Set<string>|null} [drawnRegionIds] - ids of region shapes on
+ *   the chart; notes href-linked to one of them stay hidden
  * @returns {Array<{id: string, position: [number, number], title: string}>}
  */
-export function notesRenderSpecs(collection) {
+export function notesRenderSpecs(collection, drawnRegionIds = null) {
   if (!collection || typeof collection !== "object") return [];
   const specs = [];
   for (const [id, note] of Object.entries(collection)) {
     if (!note || typeof note !== "object") continue;
+    const href = typeof note.href === "string" ? note.href : "";
+    if (drawnRegionIds && href.startsWith("/resources/regions/")) {
+      const regionId = href.slice("/resources/regions/".length);
+      if (drawnRegionIds.has(regionId)) continue;
+    }
     const p = note.position;
     if (typeof p?.latitude !== "number" || typeof p?.longitude !== "number") {
       continue;
@@ -2945,6 +2956,145 @@ export function notesRenderSpecs(collection) {
       id,
       position: [p.latitude, p.longitude],
       title: typeof note.title === "string" && note.title ? note.title : "Note",
+    });
+  }
+  return specs;
+}
+
+/** Severity keywords the bulletin pipeline highlights — one source of
+ * truth with the passage-briefing console: a region lights up exactly
+ * when its text card does (ported from signalk-passage-briefing,
+ * EUPL-1.2 siblings). */
+const SEVERE_PATTERN =
+  /\b(HURRICANE FORCE|VIOLENT STORM|VERY ROUGH SEAS|ROUGH SEAS|HIGH SEAS|PHENOMENAL SEAS|FREEZING SPRAY|DENSE FOG|VOLCANIC ASH|HURRICANE|CYCLONE|GALE|STORM|SQUALL)\b/gi;
+
+/**
+ * Whether a warning text carries a severe keyword — the same
+ * highlighter the passage-briefing console renders, so a shape lights
+ * up in the severity color exactly when its text card does.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function isSevereText(text) {
+  SEVERE_PATTERN.lastIndex = 0;
+  return SEVERE_PATTERN.test(String(text ?? ""));
+}
+
+/**
+ * Unfolds a coordinate chain into one continuous longitude frame:
+ * values are shifted ±360° against their predecessor when the raw
+ * frame jumps across the antimeridian, so a METAREA spanning the
+ * dateline draws as one polygon instead of a smeared band. The caller
+ * renders in Leaflet's frame with a reference longitude (usually the
+ * view center).
+ *
+ * @param {Array<[number, number]>} points - [[lon, lat], …] GeoJSON order
+ * @param {number|null} [referenceLon] - the longitude frame to hold
+ * @returns {Array<[number, number]>} unwrapped copy (input untouched)
+ */
+export function unwrapFrame(points, referenceLon = null) {
+  const out = [];
+  let prev = referenceLon;
+  for (const [lon, lat] of points ?? []) {
+    let value = lon;
+    if (prev != null) {
+      while (value - prev > 180) value -= 360;
+      while (value - prev < -180) value += 360;
+    }
+    out.push([value, lat]);
+    prev = value;
+  }
+  return out;
+}
+
+/** Provenance marker on published region resources — the plugin's own
+ * warnings (dashed bbox shapes are its honesty cue for cardinal-bound
+ * approximations). Third-party providers' regions draw the same. */
+const REGION_SOURCE_PLUGIN = "signalk-passage-briefing";
+
+/**
+ * The unwrapped outer rings of one published region geometry, in the
+ * given longitude frame. The passage-briefing pipeline publishes both
+ * shapes: standard-nested Polygon/MultiPolygon coordinates
+ * (`[ring, …]` — bbox rectangles, corridor bands, quadrant rings) and
+ * flat coordinate chains (`[lon, lat], …` — the bulletin engine's
+ * extracted polygon chains), so both are accepted and normalized.
+ *
+ * @param {object|null} geometry - GeoJSON geometry (or the flat-shape
+ *   variant the bulletin pipeline publishes)
+ * @param {number|null} referenceLon - the map's longitude frame
+ * @returns {Array<number[][]>} unwrapped outer rings, [[lon, lat], …] each
+ */
+function regionRings(geometry, referenceLon) {
+  const type = geometry?.type;
+  const coords = geometry?.coordinates;
+  if (!Array.isArray(coords) || coords.length === 0) {
+    return [];
+  }
+  // A position is [number, number] — if the first element's first
+  // element is a number, the coordinates are a flat chain, not rings.
+  const flat = typeof coords[0]?.[0] === "number";
+  if (type === "Polygon") {
+    const ring = flat ? coords : (coords[0] ?? null);
+    if (!Array.isArray(ring) || ring.length === 0) {
+      return [];
+    }
+    return [unwrapFrame(ring, referenceLon)];
+  }
+  if (type === "MultiPolygon") {
+    const rings = [];
+    for (const polygon of coords) {
+      // Standard: a polygon is [ring, …]; tolerate a flat chain too.
+      const ring =
+        Array.isArray(polygon) && typeof polygon[0]?.[0] === "number"
+          ? polygon
+          : Array.isArray(polygon)
+            ? polygon[0]
+            : null;
+      if (Array.isArray(ring) && ring.length > 0) {
+        rings.push(unwrapFrame(ring, referenceLon));
+      }
+    }
+    return rings;
+  }
+  return [];
+}
+
+/**
+ * Draw specs for the published region resources (work doc #48 in the
+ * passage-briefing plugin; the same visual language as its console):
+ * the warning shapes published as native Polygon/MultiPolygon
+ * features — METAREA and CAP area extents — plus any third-party
+ * provider's regions. Severity re-derives from the description text
+ * with the shared highlighter; our own bbox-approximate areas draw
+ * dashed (the honesty cue that the shape is the queried bbox, not the
+ * exact warning area).
+ *
+ * @param {Object<string, object>} regions - resources/regions listing
+ * @param {number|null} [referenceLon] - the map's longitude frame for
+ *   antimeridian-safe rings (the view center's longitude)
+ * @returns {Array<{id: string, rings: number[][][], label: string,
+ *   severe: boolean, dashed: boolean, description: string}>}
+ */
+export function regionShapes(regions, referenceLon = null) {
+  const specs = [];
+  for (const [id, region] of Object.entries(regions ?? {})) {
+    const rings = regionRings(region?.feature?.geometry, referenceLon);
+    if (rings.length === 0) {
+      continue;
+    }
+    const properties = region.feature.properties ?? {};
+    const description = region.description ?? "";
+    specs.push({
+      id,
+      rings,
+      label: region.name ?? description.split("\n")[0]?.slice(0, 90) ?? "",
+      severe: isSevereText(description),
+      dashed:
+        properties.sourcePlugin === REGION_SOURCE_PLUGIN &&
+        properties.geometryType === "bbox",
+      description,
     });
   }
   return specs;

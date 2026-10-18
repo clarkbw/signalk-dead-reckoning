@@ -783,6 +783,11 @@ class DrApp extends HTMLElement {
      * source of truth is the server's v2 resources API; the cache lets
      * saves update markers without a full refetch. */
     this.notesById = new Map();
+    /** Signal K regions cache (passage-briefing work doc #48): id →
+     * region resource. The warning shapes published alongside the
+     * notes — fetched with the same view-scoped query, drawn on the
+     * chart as polygon extents. */
+    this.regionsById = new Map();
     /** Bounds the last in-view notes fetch covered (fetchNotesInView
      * margin guard) — null until the first view-driven fetch.
      * @type {{west: number, south: number, east: number, north: number}|null} */
@@ -1256,15 +1261,32 @@ class DrApp extends HTMLElement {
   async fetchNotes(view) {
     try {
       const query = view ? `?${vm.notesViewQuery(view)}` : "";
-      const res = await fetch(`/signalk/v2/api/resources/notes${query}`);
-      if (!res.ok) return;
-      const collection = await res.json();
-      if (view) {
-        for (const [id, note] of Object.entries(collection ?? {})) {
-          this.notesById.set(id, note);
+      const [notesRes, regionsRes] = await Promise.all([
+        fetch(`/signalk/v2/api/resources/notes${query}`),
+        fetch(`/signalk/v2/api/resources/regions${query}`),
+      ]);
+      if (notesRes.ok) {
+        const collection = await notesRes.json();
+        if (view) {
+          for (const [id, note] of Object.entries(collection ?? {})) {
+            this.notesById.set(id, note);
+          }
+        } else {
+          this.notesById = new Map(Object.entries(collection ?? {}));
         }
-      } else {
-        this.notesById = new Map(Object.entries(collection ?? {}));
+      }
+      // Regions ride the same view-scoped query: the regions provider
+      // matches by geometry-bbox distance (a region has no position
+      // of its own — the paired note is the queryable anchor).
+      if (regionsRes.ok) {
+        const collection = await regionsRes.json();
+        if (view) {
+          for (const [id, region] of Object.entries(collection ?? {})) {
+            this.regionsById.set(id, region);
+          }
+        } else {
+          this.regionsById = new Map(Object.entries(collection ?? {}));
+        }
       }
       this.renderNotes();
     } catch {
@@ -1296,8 +1318,16 @@ class DrApp extends HTMLElement {
 
   /** @returns {void} */
   renderNotes() {
-    const collection = Object.fromEntries(this.notesById);
-    this.map?.renderNotes(vm.notesRenderSpecs(collection), this.notesById);
+    const notes = Object.fromEntries(this.notesById);
+    const regions = Object.fromEntries(this.regionsById);
+    const referenceLon = this.map?.map?.getCenter()?.lng ?? null;
+    const shapes = vm.regionShapes(regions, referenceLon);
+    this.map?.renderRegions(shapes, this.regionsById);
+    // A note whose region shape draws stays hidden: the region carries
+    // the warning's true extent, the note is its anchored detail — the
+    // pair renders once (href-linked, `*-area-` ids).
+    const drawn = new Set(shapes.map((shape) => shape.id));
+    this.map?.renderNotes(vm.notesRenderSpecs(notes, drawn), this.notesById);
   }
 
   /**

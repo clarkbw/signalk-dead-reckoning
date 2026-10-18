@@ -57,6 +57,207 @@ test("notesRenderSpecs: positioned notes shape, position-less skipped", async ()
   assert.equal(untitled[0].title, "Note");
 });
 
+test("notesRenderSpecs: notes paired with a drawn region stay hidden", async () => {
+  const vm = await loadVm();
+  const notes = {
+    "n-area-1": {
+      title: "Gale warning",
+      href: "/resources/regions/n-area-1",
+      position: { latitude: 60.1, longitude: 24.2 },
+    },
+    "n-plain": {
+      title: "Rocks",
+      position: { latitude: 60.2, longitude: 24.3 },
+    },
+    "n-other-area": {
+      title: "Unrelated region pair",
+      href: "/resources/regions/other-region",
+      position: { latitude: 60.3, longitude: 24.4 },
+    },
+  };
+  // With the region's shape on the chart, the href-paired note stays
+  // hidden — the extent renders once.
+  const specs = vm.notesRenderSpecs(notes, new Set(["n-area-1"]));
+  assert.deepEqual(
+    specs.map((s) => s.id),
+    ["n-plain", "n-other-area"],
+  );
+  // Without shapes, every positioned note renders.
+  assert.equal(vm.notesRenderSpecs(notes).length, 3);
+  assert.equal(vm.notesRenderSpecs(notes, null).length, 3);
+});
+
+test("regionShapes: polygons, severity, bbox honesty cue, label fallback", async () => {
+  const vm = await loadVm();
+  const regions = {
+    "metarea-1-area-1": {
+      name: "METAREA I",
+      description: "GALE WARNING. Winds forecast 30 to 45 kn.",
+      feature: {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [-10, 40],
+              [10, 40],
+              [10, 50],
+              [-10, 50],
+              [-10, 40],
+            ],
+          ],
+        },
+        properties: {
+          sourcePlugin: "signalk-passage-briefing",
+          geometryType: "polygon",
+        },
+      },
+    },
+    "cap-2-area-2": {
+      description: "CAP area 2 dense fog observed.",
+      feature: {
+        type: "Feature",
+        geometry: {
+          type: "MultiPolygon",
+          coordinates: [
+            [
+              [
+                [20, 40],
+                [22, 40],
+                [22, 42],
+                [20, 42],
+                [20, 40],
+              ],
+            ],
+          ],
+        },
+        properties: {
+          sourcePlugin: "signalk-passage-briefing",
+          geometryType: "bbox",
+        },
+      },
+    },
+    "not-a-shape": {
+      description: "Point-only resource",
+      feature: {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [25, 60] },
+      },
+    },
+  };
+  const shapes = vm.regionShapes(regions, 0);
+  assert.equal(shapes.length, 2);
+  const [metarea, cap] = shapes;
+  assert.equal(metarea.id, "metarea-1-area-1");
+  assert.equal(metarea.label, "METAREA I");
+  assert.equal(metarea.severe, true, "GALE is severe");
+  assert.equal(metarea.dashed, false, "polygon areas draw solid");
+  assert.equal(metarea.rings.length, 1);
+  assert.equal(metarea.rings[0].length, 5, "ring kept closed");
+  assert.equal(
+    cap.label,
+    "CAP area 2 dense fog observed.",
+    "name-less label falls back to the description's first line",
+  );
+  assert.equal(cap.severe, true, "DENSE FOG is severe");
+  assert.equal(cap.dashed, true, "our bbox-approximate area draws dashed");
+  assert.equal(cap.rings.length, 1, "multipolygon outer rings");
+  // Non-severe text renders calm.
+  const calm = vm.regionShapes({
+    x: {
+      description: "Slight seas expected.",
+      feature: {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 1],
+              [0, 0],
+            ],
+          ],
+        },
+        properties: {},
+      },
+    },
+  });
+  assert.equal(calm[0].severe, false);
+  // Third-party regions draw the same (not dashed — the honesty cue
+  // is the publishing plugin's own approximation marker).
+  const thirdParty = vm.regionShapes({
+    y: {
+      description: "SQUALL warning.",
+      feature: {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 1],
+              [0, 0],
+            ],
+          ],
+        },
+        properties: { sourcePlugin: "someone-else" },
+      },
+    },
+  });
+  assert.equal(thirdParty[0].severe, true);
+  assert.equal(thirdParty[0].dashed, false);
+  assert.deepEqual(vm.regionShapes(null), []);
+});
+
+test("unwrapFrame: rings across the antimeridian stay one polygon", async () => {
+  const vm = await loadVm();
+  // A ring stepping over the dateline: 179 → -179 is one hop, not a
+  // 358° smear, once unwrapped against the frame.
+  const unwrapped = vm.unwrapFrame(
+    [
+      [178, 10],
+      [179, 10],
+      [-179, 10],
+      [-178, 10],
+    ],
+    179,
+  );
+  assert.deepEqual(unwrapped, [
+    [178, 10],
+    [179, 10],
+    [181, 10],
+    [182, 10],
+  ]);
+  // Already-continuous frames pass through untouched.
+  assert.deepEqual(
+    vm.unwrapFrame(
+      [
+        [0, 0],
+        [10, 0],
+      ],
+      null,
+    ),
+    [
+      [0, 0],
+      [10, 0],
+    ],
+  );
+  assert.deepEqual(vm.unwrapFrame(null), []);
+});
+
+test("isSevereText: the shared severity highlighter", async () => {
+  const vm = await loadVm();
+  assert.equal(vm.isSevereText("GALE WARNING. Winds 30 to 45 kn."), true);
+  assert.equal(vm.isSevereText("HURRICANE FORCE 10 expected."), true);
+  assert.equal(vm.isSevereText("slight seas, good visibility"), false);
+  assert.equal(vm.isSevereText(""), false);
+  assert.equal(vm.isSevereText(null), false);
+});
+
 test("noteBodyText: body preferred, description fallback (provider notes)", async () => {
   const vm = await loadVm();
   assert.equal(
@@ -383,4 +584,30 @@ test("notes wiring: v2 resources API, layers-control toggle, pick menu integrati
   // headline — measure and hazard marking stay.
   assert.match(mapSrc, /const items = note\s*\?\s*\[/);
   assert.match(mapSrc, /if \(!note\) \{\s*menu\.textContent/);
+});
+
+test("regions wiring: fetched with the notes, drawn as warning shapes, pairing", () => {
+  // Regions ride the same view-scoped fetch as the notes (passage-
+  // briefing work doc #48): one query, one render path — the paired
+  // note stays hidden when its region's shape draws.
+  assert.match(appSrc, /resources\/regions/);
+  assert.match(appSrc, /regionsById/);
+  assert.match(appSrc, /vm\.regionShapes\(/);
+  assert.match(appSrc, /renderRegions\(shapes, this\.regionsById\)/);
+  assert.match(appSrc, /vm\.notesRenderSpecs\(notes, drawn\)/);
+  // Map: a layers-control checkbox, mounted by default like the notes
+  // (not in the start-detached set), severity colors, GeoJSON ring
+  // order flipped to Leaflet lat/lng, sticky tooltips, click-through
+  // to the paired note's detail surface.
+  assert.match(mapSrc, /regions: \["Regions", this\.layers\.regions\]/);
+  assert.match(mapSrc, /renderRegions\(specs, resourcesById\) \{/);
+  assert.match(mapSrc, /severe \? "#ff5c5c" : "#ffb45c"/);
+  assert.match(mapSrc, /dashArray: spec\.dashed \? "4 6" : undefined/);
+  assert.match(mapSrc, /ring\.map\(\(\[lon, lat\]\) => \[lat, lon\]\)/);
+  assert.match(mapSrc, /openRegionDetail\(spec, e\.latlng\)/);
+  assert.match(mapSrc, /\/resources\/regions\/\$\{spec\.id\}/);
+  // The pick menu shows the clicked coordinates (helm request), in
+  // the watchkeeper's own position format.
+  assert.match(mapSrc, /dr-pick-coords/);
+  assert.match(mapSrc, /posfmt\.fmtPos\(picked\)/);
 });

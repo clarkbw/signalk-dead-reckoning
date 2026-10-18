@@ -33,6 +33,7 @@
 
 /* global L */
 
+import * as posfmt from "./dr-position-format.js";
 import { THEME_CSS } from "./dr-theme.js";
 import * as vm from "./dr-viewmodel.js";
 
@@ -130,6 +131,13 @@ class DrMapView extends HTMLElement {
       }
       .dr-target-key {
         color: var(--text-muted, #888899);
+      }
+      /* The clicked coordinates (helm request): the pick menu shows
+         the picked position in the watchkeeper's position format —
+         readouts aside, a chart pick carries its position. */
+      .dr-pick-coords {
+        color: var(--color-teal, #4b8b99);
+        font: 11px ui-monospace, "Fira Code", monospace;
       }
       /* Helm readouts (bearing/CPA rows) — emphasized: these are the
          numbers the watchkeeper opened the menu for. */
@@ -367,6 +375,12 @@ class DrMapView extends HTMLElement {
       // gale warnings etc.), so they must not hide behind a toggle.
       // Still removable through the layers control when decluttering.
       notes: null,
+      // Warning region shapes (work doc #48 in signalk-passage-
+      // briefing): METAREA/CAP area extents published as Polygon
+      // resources. Same always-on default as the notes they pair
+      // with — a shaped warning's extent must not hide behind a
+      // toggle its note doesn't share.
+      regions: null,
       // Measure tool geometry (work doc #30) — transient, always on.
       measure: null,
     };
@@ -765,6 +779,7 @@ class DrMapView extends HTMLElement {
           rings: ["Range rings", this.layers.rings],
           laylines: ["Laylines", this.layers.laylines],
           notes: ["Notes", this.layers.notes],
+          regions: ["Regions", this.layers.regions],
         };
         const controlOverlays = {};
         for (const [label, layer] of Object.values(overlays)) {
@@ -1202,9 +1217,15 @@ class DrMapView extends HTMLElement {
       }
       menu.appendChild(actions);
     }
-    // The helm readout (work doc #30): bearing & distance from BOTH
-    // own-ship references. Computed at menu-open from the last known
-    // positions — hidden per source when that reference is absent.
+    // The helm readout (work doc #30): the clicked coordinates in the
+    // watchkeeper's own position format first — a chart pick without
+    // its position is not chartwork — then bearing & distance from
+    // BOTH own-ship references. Hidden per source when that reference
+    // is absent.
+    const coords = document.createElement("div");
+    coords.className = "dr-pick-coords";
+    coords.textContent = posfmt.fmtPos(picked);
+    menu.appendChild(coords);
     const own = {
       dr: this._lastSnap?.drPosition ?? null,
       gps: this._lastSnap?.gpsPosition ?? null,
@@ -2362,6 +2383,7 @@ class DrMapView extends HTMLElement {
    */
   renderNotes(specs, resourcesById) {
     this.notesById = resourcesById ?? new Map();
+    this.regionsById ??= new Map();
     const layer = this.layers.notes;
     if (!layer) return;
     layer.clearLayers();
@@ -2374,6 +2396,77 @@ class DrMapView extends HTMLElement {
         .addEventListener("contextmenu", () => this.openNoteDetail(spec))
         .addTo(layer);
     }
+  }
+
+  /**
+   * Renders the published warning region shapes (signalk-passage-
+   * briefing work doc #48): METAREA/CAP area extents as Polygon/
+   * MultiPolygon resources, plus any third-party provider's regions.
+   * The plugin's visual language: severity color (severe red, else
+   * the bulletin orange), heavier stroke for severe, and a dashed
+   * outline for our own bbox-approximate areas (the honesty cue that
+   * the shape is the queried bbox, not the exact warning area).
+   * Clicking a shape opens the pick menu at the clicked point with
+   * the region's paired note detail (href-linked, `*-area-` ids) —
+   * the same detail surface as clicking the note marker.
+   *
+   * @param {Array<{id: string, rings: number[][][], label: string,
+   *   severe: boolean, dashed: boolean, description: string}>} specs
+   * @param {Map<string, object>} [resourcesById] - full region
+   *   resources by id (dr-app's cache)
+   * @returns {void}
+   */
+  renderRegions(specs, resourcesById) {
+    this.regionsById = resourcesById ?? new Map();
+    const layer = this.layers.regions;
+    if (!layer) return;
+    layer.clearLayers();
+    for (const spec of specs ?? []) {
+      // Rings arrive in GeoJSON [lon, lat] order (unwrapped against
+      // the view's longitude frame) — Leaflet wants [lat, lng].
+      for (const ring of spec.rings ?? []) {
+        L.polygon(
+          ring.map(([lon, lat]) => [lat, lon]),
+          {
+            color: spec.severe ? "#ff5c5c" : "#ffb45c",
+            weight: spec.severe ? 2 : 1.5,
+            dashArray: spec.dashed ? "4 6" : undefined,
+          },
+        )
+          .bindTooltip(spec.label, { sticky: true })
+          .addEventListener("click", (e) =>
+            this.openRegionDetail(spec, e.latlng),
+          )
+          .addTo(layer);
+      }
+    }
+  }
+
+  /**
+   * Opens a region shape's detail surface: the pick menu at the
+   * clicked point with the paired note (href-linked) attached — the
+   * same detail surface as clicking the note marker, so the shape
+   * and its anchored note never diverge in affordance.
+   *
+   * @param {{id: string, label: string}} spec
+   * @param {{lat: number, lng: number}} latlng - clicked point
+   * @returns {void}
+   */
+  openRegionDetail(spec, latlng) {
+    let paired = null;
+    for (const [id, note] of this.notesById ?? []) {
+      if (
+        typeof note?.href === "string" &&
+        note.href === `/resources/regions/${spec.id}`
+      ) {
+        paired = { ...note, id };
+        break;
+      }
+    }
+    this.showPickMenu(latlng, null, {
+      label: spec.label,
+      note: paired ?? { id: spec.id, title: spec.label },
+    });
   }
 
   /**

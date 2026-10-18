@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Warning region shapes on the chart (signalk-passage-briefing work doc #48).** The passage-briefing plugin now publishes METAREA and CAP warning areas as `regions` resources (native Polygon/MultiPolygon features paired with their point notes) — the chart draws them: fetched with the same view-scoped query as the notes (`/signalk/v2/api/resources/regions`, matched by geometry-bbox distance), rendered on a "Regions" layers-control toggle mounted by default, in the plugin console's visual language — severity red for `GALE`/`HURRICANE`/`DENSE FOG`/… keyword texts (the shared highlighter), bulletin orange otherwise, heavier stroke for severe, and a dashed outline for the briefing plugin's own bbox-approximate areas (the honesty cue that the shape is the queried bbox). Rings unwrap against the view's longitude frame so a METAREA spanning the dateline draws as one polygon, and both published geometry shapes are accepted (standard-nested and the bulletin engine's flat coordinate chains). A note whose region shape draws stays hidden — the extent renders once — and clicking a shape opens the pick menu at the clicked point with the href-paired note's detail (title, body, Edit/Delete), the same surface as clicking the note marker.
+- **The chart pick menu shows the clicked coordinates** (helm request): the picked position renders in the watchkeeper's own position format (decimal/DM/DMS, shared with the sight panel) above the bearing and distance rows.
+
 ### Fixed
 - **Radar-range chart picks seed the clicked object's coordinates again.** `seedObjectPosition` looked the coord fieldset up at shadow-root level, and both the vertical (distance-CPL) and radar forms carry a `data-prefix="center"` fieldset — the query returned the vertical form's (first in document order), so a "Radar range at" pick switched to the radar tab but filled the hidden distance-CPL form, leaving the radar form's Object position empty. The lookup is now scoped to the switched-to form.
 
