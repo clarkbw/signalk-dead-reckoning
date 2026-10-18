@@ -419,24 +419,85 @@ class DrMapView extends HTMLElement {
    */
   initMap() {
     if (this.map || typeof L === "undefined") return;
+    const view = this;
+    // Smooth wheel zoom: replaces the stock ScrollWheelZoom handler.
+    // Stock quantizes each debounced wheel burst to whole zoom levels
+    // and plays a full animation per level — a jerky staircase under
+    // the helm's hand — and its sigmoid curve is tuned for that
+    // quantization: with fractional zoom (zoomSnap 0) a single detent
+    // moves the map ~0.01 levels, i.e. glacial. This handler batches
+    // wheel deltas per animation frame and applies a continuous
+    // fractional zoom, un-animated — the accumulation itself is the
+    // animation. The anchor is follow-aware: about the map center
+    // while following the boat (the vessel never leaves the middle
+    // of the gesture), around the cursor otherwise. Speed matches
+    // stock Leaflet (≈ one level per detent) via the same
+    // platform-aware normalization (L.DomEvent.getWheelDelta), minus
+    // the debounce lag and the per-level ceil.
+    const WHEEL_UNITS_PER_LEVEL = 60;
+    const SmoothWheelZoom = L.Handler.extend({
+      addHooks() {
+        L.DomEvent.on(this._map._container, "wheel", this._onWheel, this);
+        this._pending = 0;
+        this._raf = 0;
+      },
+      removeHooks() {
+        const container = this._map?._container;
+        if (container) L.DomEvent.off(container, "wheel", this._onWheel, this);
+        if (this._raf) cancelAnimationFrame(this._raf);
+        this._raf = 0;
+        this._pending = 0;
+      },
+      _onWheel(e) {
+        const map = this._map;
+        // The map is the whole page — a wheel event must neither
+        // scroll it nor leak past the map element.
+        L.DomEvent.stop(e);
+        const delta = L.DomEvent.getWheelDelta(e);
+        if (!delta) return;
+        this._pending += delta;
+        this._pos = map.mouseEventToContainerPoint(e);
+        if (this._raf) return;
+        this._raf = requestAnimationFrame(() => {
+          this._raf = 0;
+          const d = this._pending;
+          this._pending = 0;
+          if (!d || !map._loaded) return;
+          // Linear, clamped per frame so a violent trackpad flick
+          // can't overspeed the gesture: 60 normalized units ≈ one
+          // zoom level — one detent on most platforms.
+          const step = Math.max(-1.5, Math.min(1.5, d / WHEEL_UNITS_PER_LEVEL));
+          const zoom = map._limitZoom(map.getZoom() + step);
+          if (view.follow) {
+            // Following the boat: zoom about the map center so the
+            // vessel stays dead-center through the whole gesture —
+            // a cursor-anchored zoom would drag it off-center and
+            // the follow pan would have to yank it back. The follow
+            // pan (per DR tick) composes cleanly with these frames.
+            map.setZoom(zoom, { animate: false });
+          } else {
+            map.setZoomAround(this._pos, zoom, { animate: false });
+          }
+        });
+      },
+    });
     this.map = L.map(this.mapEl, {
       center: [60, 24],
       zoom: 10,
-      // Fractional wheel zoom (zoomSnap 0): Leaflet's default snaps
-      // every wheel burst to a whole zoom level and plays a full
-      // zoom animation per level, which reads as a series of jerky
-      // jumps. Continuous zoom renders the accumulation directly —
-      // the MapLibre vector charts zoom natively fractionally, and
-      // raster tiles merely scale between integer levels. A higher
-      // wheelPxPerZoomLevel (Leaflet default 60) keeps a single
-      // detent from firing a whole level at once.
+      // Fractional zoom (zoomSnap 0): the chart renders continuously
+      // between integer levels — the MapLibre vector charts zoom
+      // natively fractionally, raster tiles scale. The smooth wheel
+      // handler above needs it unrounded.
       zoomSnap: 0,
-      wheelPxPerZoomLevel: 120,
+      // Stock ScrollWheelZoom off — the smooth handler replaces it.
+      scrollWheelZoom: false,
       // Bottom-left, stacked above the re-center button (work doc
       // #26): the top corners belong to dr-app's floating controls.
       zoomControl: false,
       attributionControl: false,
+      smoothWheelZoom: true,
     });
+    this.map.addHandler("smoothWheelZoom", SmoothWheelZoom);
     L.control.zoom({ position: "bottomleft" }).addTo(this.map);
     for (const key of Object.keys(this.layers)) {
       this.layers[key] = L.layerGroup();
@@ -454,34 +515,31 @@ class DrMapView extends HTMLElement {
     // collection query with a provider-shaped area, so view-scoped
     // fetches (position + covering radius, Freeboard's wire format)
     // are the only honest way to cover a zoomed-out view.
+    // Per-frame smooth zooming fires zoomend/moveend continuously, so
+    // the zoom-dependent re-renders (range rings, laylines) and the
+    // view-changed dispatch (note refetch downstream) run on a
+    // trailing debounce. The scale bar stays live — it's a cheap text
+    // update.
+    this._viewSettle = 0;
     this.map.on("zoomend moveend", () => {
       this._scaleCtrl.update(this.map);
-      this.renderRangeRings();
-      this.renderLaylines();
-      const b = this.map.getBounds();
-      this.dispatchEvent(
-        new CustomEvent("dr-view-changed", {
-          detail: {
-            west: b.getWest(),
-            south: b.getSouth(),
-            east: b.getEast(),
-            north: b.getNorth(),
-          },
-        }),
-      );
-    });
-    // Wheel/pinch zoom and the follow pan fight each other: a
-    // cursor-anchored zoom shifts the center, and the next DR tick
-    // would yank it back mid-gesture — the center "moves after you
-    // stop scrolling". Track the gesture so the follow pan stands
-    // down while zooming (and through a short settle window after);
-    // follow resumes panning afterwards.
-    this.map.on("zoomstart", () => {
-      this._zoomGesture = true;
-    });
-    this.map.on("zoomend", () => {
-      this._zoomGesture = false;
-      this._lastZoomEndMs = Date.now();
+      clearTimeout(this._viewSettle);
+      this._viewSettle = setTimeout(() => {
+        if (!this.map) return;
+        this.renderRangeRings();
+        this.renderLaylines();
+        const b = this.map.getBounds();
+        this.dispatchEvent(
+          new CustomEvent("dr-view-changed", {
+            detail: {
+              west: b.getWest(),
+              south: b.getSouth(),
+              east: b.getEast(),
+              north: b.getNorth(),
+            },
+          }),
+        );
+      }, 200);
     });
     this.map.on("dragstart", () => {
       // Dragging the chart is an explicit "leave me here": follow
@@ -793,8 +851,10 @@ class DrMapView extends HTMLElement {
 
   /** Toggles follow from the ◎ button: engaged → let go (the map
    * stays put), released → re-engage and pan back to the DR
-   * position. */
+   * position. Also closes a stuck pick menu, which can otherwise
+   * paint over the button and swallow its clicks. */
   toggleFollow() {
+    this.hidePickMenu();
     if (this.follow) {
       this.setFollow(false);
       return;
@@ -1471,17 +1531,13 @@ class DrMapView extends HTMLElement {
         this._didInitialFit = true;
         this.map.setView(snap.drPosition, this.map.getZoom() || 12);
       }
-      // Follow pan: skip while a zoom gesture is live or settling —
-      // a cursor-anchored wheel zoom shifts the center and an
-      // immediate panTo back would yank it (the center "moving after
-      // you stop scrolling"). Follow resumes after the settle
-      // window. Un-animated: a hard pan per DR tick can't queue up
-      // against Leaflet's own gesture animations.
-      if (
-        this.follow &&
-        !this._zoomGesture &&
-        Date.now() - (this._lastZoomEndMs ?? 0) > 1000
-      ) {
+      // Follow pan: the wheel zoom is center-anchored while
+      // following (the vessel never leaves the middle of the
+      // gesture), so the per-tick panTo composes with zoom frames
+      // instead of fighting them. Un-animated: a hard pan per DR
+      // tick can't queue up against Leaflet's own gesture
+      // animations.
+      if (this.follow) {
         this.map.panTo(snap.drPosition, { animate: false });
       }
       this.layers.drMarker.clearLayers();

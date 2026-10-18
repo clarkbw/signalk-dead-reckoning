@@ -160,25 +160,58 @@ test("open-centered: one-shot fit on the first GPS fix or DR position", () => {
   assert.match(render, /!this\._didInitialFit && !this\._userMoved/);
 });
 
-test("wheel zoom: fractional and settle-gated follow pan (regression)", () => {
-  // zoomSnap 0: continuous wheel zoom instead of whole-level jumps;
-  // a higher wheelPxPerZoomLevel keeps one detent from firing a
-  // whole level at once.
-  assert.match(mapSrc, /zoomSnap: 0/);
-  assert.match(mapSrc, /wheelPxPerZoomLevel: 120/);
-  // The follow pan stands down during a zoom gesture and through the
-  // settle window — a cursor-anchored zoom used to be yanked back to
-  // the DR position right after the wheel stopped.
-  assert.match(mapSrc, /zoomstart", \(\) => \{[\s\S]*?_zoomGesture = true/);
+test("wheel zoom: smooth rAF handler replaces stock ScrollWheelZoom (regression)", () => {
+  // Stock ScrollWheelZoom quantizes each debounced wheel burst to
+  // whole levels (jerky) and its sigmoid is tuned for that quantize —
+  // at zoomSnap 0 a detent moves ~0.01 levels (glacial). The custom
+  // handler zooms continuously, per animation frame, at stock speed.
+  assert.match(mapSrc, /scrollWheelZoom: false/, "stock handler off");
+  assert.match(mapSrc, /smoothWheelZoom: true/);
+  assert.match(mapSrc, /SmoothWheelZoom = L\.Handler\.extend\(/);
+  const handler = mapSrc.slice(
+    mapSrc.indexOf("SmoothWheelZoom = L.Handler.extend("),
+    mapSrc.indexOf("this.map = L.map(this.mapEl, {"),
+  );
+  assert.match(handler, /getWheelDelta\(/, "platform-aware normalization");
+  assert.match(handler, /requestAnimationFrame/, "rAF-batched, not debounced");
+  // Follow-aware anchor: center-anchored while following (the vessel
+  // stays dead-center through the gesture), cursor-anchored otherwise.
+  assert.match(handler, /if \(view\.follow\) \{[\s\S]*?map\.setZoom\(zoom/);
+  assert.match(handler, /setZoomAround\(this\._pos, zoom/);
+  assert.match(handler, /animate: false/, "no per-level animation");
+  assert.match(handler, /WHEEL_UNITS_PER_LEVEL/, "stock-parity speed const");
+  assert.match(mapSrc, /addHandler\("smoothWheelZoom", SmoothWheelZoom\)/);
+  assert.match(mapSrc, /zoomSnap: 0/, "fractional zoom unrounded");
+});
+
+test("follow pan: runs every tick, no gesture suppression machinery", () => {
+  // While following, the wheel zoom is center-anchored — the vessel
+  // never leaves the middle of the gesture — so the per-tick panTo
+  // composes with zoom frames instead of fighting them. No timestamp
+  // or flag machinery: nothing to wedge, nothing to expire.
+  assert.doesNotMatch(mapSrc, /_zoomGesture/);
+  assert.doesNotMatch(mapSrc, /_lastUserZoomMs/);
+  assert.doesNotMatch(mapSrc, /_lastZoomEndMs/);
   assert.match(
     mapSrc,
-    /zoomend", \(\) => \{[\s\S]*?_lastZoomEndMs = Date\.now\(\)/,
+    /if \(this\.follow\) \{\n {8}this\.map\.panTo\(snap\.drPosition, \{ animate: false \}\);/,
   );
-  assert.match(
-    mapSrc,
-    /this\.follow &&\n {8}!this\._zoomGesture &&/,
-    "follow pan suppressed while zooming",
+  assert.doesNotMatch(mapSrc, /map\.fire\("drwheel"\)/);
+});
+
+test("view-settle: zoom-dependent re-renders debounced under smooth zoom", () => {
+  // Per-frame zooming fires zoomend/moveend continuously — the ring
+  // and layline re-renders (and the note refetch they trigger
+  // downstream) must not run per frame.
+  const handler = mapSrc.slice(
+    mapSrc.indexOf('this.map.on("zoomend moveend"'),
+    mapSrc.indexOf('this.map.on("zoomstart"'),
   );
+  assert.match(handler, /clearTimeout\(this\._viewSettle\)/);
+  assert.match(handler, /setTimeout\(/);
+  assert.match(handler, /renderRangeRings\(\)/);
+  assert.match(handler, /renderLaylines\(\)/);
+  assert.match(handler, /dr-view-changed/);
 });
 
 test("pick menu: DR/GPS bearing rows and CPA readouts for both references", () => {
