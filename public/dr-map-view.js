@@ -468,13 +468,16 @@ class DrMapView extends HTMLElement {
           // zoom level — one detent on most platforms.
           const step = Math.max(-1.5, Math.min(1.5, d / WHEEL_UNITS_PER_LEVEL));
           const zoom = map._limitZoom(map.getZoom() + step);
-          if (view.follow) {
-            // Following the boat: zoom about the map center so the
-            // vessel stays dead-center through the whole gesture —
-            // a cursor-anchored zoom would drag it off-center and
-            // the follow pan would have to yank it back. The follow
-            // pan (per DR tick) composes cleanly with these frames.
-            map.setZoom(zoom, { animate: false });
+          if (view.follow && view.followTarget) {
+            // Following the boat: anchor every zoom frame on the
+            // BOAT'S POSITION, not the map center. The center can
+            // drift from the vessel between DR ticks (a keyboard pan
+            // never fires dragstart, extensions may recenter, the
+            // boat itself moves) — anchoring the center would freeze
+            // that drift for the whole gesture ("snaps to whatever
+            // was the map center"). setView re-centers on the vessel
+            // each frame, so the zoom locks onto the boat.
+            map.setView(view.followTarget, zoom, { animate: false });
           } else {
             map.setZoomAround(this._pos, zoom, { animate: false });
           }
@@ -540,6 +543,48 @@ class DrMapView extends HTMLElement {
           }),
         );
       }, 200);
+    });
+    this.map.on("zoom", (e) => {
+      // Pinch frames re-anchor on the pinch-start center while
+      // following (touchZoom "center"), so the per-tick follow pan is
+      // redundant mid-gesture and its _resetView would only flicker
+      // against Leaflet's pinch transform — stand down briefly.
+      if (e?.pinch) this._lastPinchMs = Date.now();
+    });
+    // Pinch (touch zoom): Leaflet's TouchZoom captures the gesture
+    // anchor at touchstart — the map center at that instant — and the
+    // "center" mode re-anchors every frame on it. While following,
+    // snap the boat to the center first, so the whole gesture zooms
+    // about the vessel even when the center had drifted from it. The
+    // listener rides the map host's PARENT in capture phase: at-target
+    // listeners run in registration order and Leaflet registered its
+    // touchstart handler at map creation, so only an ancestor can run
+    // before it.
+    (this.mapEl.parentElement ?? this.mapEl).addEventListener(
+      "touchstart",
+      (e) => {
+        if (
+          !this.follow ||
+          !this.followTarget ||
+          !this.map ||
+          e.touches.length !== 2
+        ) {
+          return;
+        }
+        const pt = this.map.latLngToContainerPoint(this.followTarget);
+        const half = this.map.getSize().divideBy(2);
+        if (Math.hypot(pt.x - half.x, pt.y - half.y) < 2) return;
+        this.map.panTo(this.followTarget, { animate: false });
+      },
+      { capture: true },
+    );
+    // Double-click zoom: Leaflet's "center" mode jumps about the
+    // current center — while following, snap the boat back right
+    // after the jump (this handler runs after Leaflet's).
+    this.map.on("dblclick", () => {
+      if (this.follow && this.followTarget) {
+        this.map.panTo(this.followTarget, { animate: false });
+      }
     });
     this.map.on("dragstart", () => {
       // Dragging the chart is an explicit "leave me here": follow
@@ -838,6 +883,22 @@ class DrMapView extends HTMLElement {
    */
   setFollow(on) {
     this.follow = on;
+    // Follow-aware gesture anchoring: while following, pinch and
+    // double-click zoom about the center (Leaflet's built-in "center"
+    // modes) so the vessel never leaves the middle of the gesture —
+    // same semantic as the wheel handler's view.follow branch. Read
+    // per gesture frame, so flipping here takes effect immediately.
+    const map = this.map;
+    if (map) {
+      map.options.touchZoom = on ? "center" : true;
+      map.options.doubleClickZoom = on ? "center" : true;
+      // Keyboard pans (arrow keys) don't fire dragstart — the view is
+      // locked while following, so the keyboard handler stands down
+      // entirely; arrow keys would otherwise drift the chart off the
+      // vessel and the next DR tick would yank it back.
+      if (on) map.keyboard?.disable();
+      else map.keyboard?.enable();
+    }
     const btn = this.recenterBtn;
     if (!btn) return;
     btn.classList.toggle("engaged", on);
@@ -862,11 +923,13 @@ class DrMapView extends HTMLElement {
     this.recenter();
   }
 
-  /** Re-engages follow and pans to the last DR position. */
+  /** Re-engages follow and pans to the follow target — the DR position
+   * when the engine produces one, else the last GNSS fix — un-animated:
+   * the helm asked for the boat, the view goes there at once. */
   recenter() {
     this.setFollow(true);
-    if (this.lastDrPosition && this.map) {
-      this.map.panTo(this.lastDrPosition);
+    if (this.followTarget && this.map) {
+      this.map.panTo(this.followTarget, { animate: false });
     }
   }
 
@@ -1499,6 +1562,17 @@ class DrMapView extends HTMLElement {
       });
     }
 
+    // Follow target: the DR position while it is live — the helm's
+    // explicit choice, and GPS ticks never drag the view between the
+    // two marks — falling back to the GNSS fix once the DR engine
+    // goes idle (one clean transfer, no oscillation), and the only
+    // target before the first DR position arrives (vm.followTarget).
+    // Without a fallback the ◎ button would engage (turn teal) and
+    // then silently do nothing, because there is no DR position to
+    // center on.
+    const followTarget = vm.followTarget(snap);
+    if (followTarget) this.followTarget = followTarget;
+
     // GPS boat marker — drawn whenever we have a fix, even moored with no
     // DR. SPEC §14.1 shows both the live vessel and the ghost track.
     // Work doc #30: a boat-shaped glyph rotated to COG (dot fallback when
@@ -1530,15 +1604,6 @@ class DrMapView extends HTMLElement {
       if (!this._didInitialFit && !this._userMoved) {
         this._didInitialFit = true;
         this.map.setView(snap.drPosition, this.map.getZoom() || 12);
-      }
-      // Follow pan: the wheel zoom is center-anchored while
-      // following (the vessel never leaves the middle of the
-      // gesture), so the per-tick panTo composes with zoom frames
-      // instead of fighting them. Un-animated: a hard pan per DR
-      // tick can't queue up against Leaflet's own gesture
-      // animations.
-      if (this.follow) {
-        this.map.panTo(snap.drPosition, { animate: false });
       }
       this.layers.drMarker.clearLayers();
       // The DR position plots as the navigator's mark: a boat glyph
@@ -1573,6 +1638,23 @@ class DrMapView extends HTMLElement {
           .bindTooltip(`uncertainty ±${u.radiusNm.toFixed(2)} nm (${u.method})`)
           .addTo(this.layers.uncertainty);
       }
+    }
+
+    // Follow pan: runs on the follow target (the live DR position, or
+    // the GNSS fix while the DR engine is idle), independent of which
+    // markers rendered. The zoom gestures are all anchored on that
+    // same target while following (wheel handler checks follow
+    // itself; pinch and double-click via Leaflet's "center" modes),
+    // so the per-tick panTo composes with zoom frames instead of
+    // fighting them — except during an active pinch, where it stands
+    // down (see the zoom handler). Un-animated: a hard pan per tick
+    // can't queue up against Leaflet's own gesture animations.
+    if (
+      this.follow &&
+      this.followTarget &&
+      Date.now() - (this._lastPinchMs ?? 0) > 300
+    ) {
+      this.map.panTo(this.followTarget, { animate: false });
     }
 
     // REST-sourced overlays.
@@ -2503,8 +2585,6 @@ class DrMapView extends HTMLElement {
   }
 }
 
-customElements.define("dr-map-view", DrMapView);
-
 /**
  * Nautical scale bar (work doc #30): a Leaflet control showing a bar
  * + NM label (metric fallback at deep zooms), snapped to the nautical
@@ -2562,3 +2642,5 @@ class NauticalScaleControl extends L.Control {
       `<span>${spec.label}</span>`;
   }
 }
+
+customElements.define("dr-map-view", DrMapView);

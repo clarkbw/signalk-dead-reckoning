@@ -174,9 +174,15 @@ test("wheel zoom: smooth rAF handler replaces stock ScrollWheelZoom (regression)
   );
   assert.match(handler, /getWheelDelta\(/, "platform-aware normalization");
   assert.match(handler, /requestAnimationFrame/, "rAF-batched, not debounced");
-  // Follow-aware anchor: center-anchored while following (the vessel
-  // stays dead-center through the gesture), cursor-anchored otherwise.
-  assert.match(handler, /if \(view\.follow\) \{[\s\S]*?map\.setZoom\(zoom/);
+  // Follow-aware anchor: each zoom frame anchors on the BOAT'S
+  // POSITION while following (the map center can drift from the
+  // vessel — keyboard pans never fire dragstart, extensions may
+  // recenter — and anchoring the center would freeze that drift for
+  // the whole gesture); cursor-anchored otherwise.
+  assert.match(
+    handler,
+    /if \(view\.follow && view\.followTarget\) \{[\s\S]*?map\.setView\(view\.followTarget, zoom/,
+  );
   assert.match(handler, /setZoomAround\(this\._pos, zoom/);
   assert.match(handler, /animate: false/, "no per-level animation");
   assert.match(handler, /WHEEL_UNITS_PER_LEVEL/, "stock-parity speed const");
@@ -184,19 +190,54 @@ test("wheel zoom: smooth rAF handler replaces stock ScrollWheelZoom (regression)
   assert.match(mapSrc, /zoomSnap: 0/, "fractional zoom unrounded");
 });
 
-test("follow pan: runs every tick, no gesture suppression machinery", () => {
-  // While following, the wheel zoom is center-anchored — the vessel
-  // never leaves the middle of the gesture — so the per-tick panTo
-  // composes with zoom frames instead of fighting them. No timestamp
-  // or flag machinery: nothing to wedge, nothing to expire.
+test("follow pan: center-anchored gestures, pinch stand-down", () => {
+  // While following, ALL zoom gestures anchor on the center (wheel
+  // handler checks follow; pinch and double-click via Leaflet's
+  // "center" modes flipped in setFollow), so the per-tick panTo
+  // composes with zoom frames instead of fighting them — except
+  // during an active pinch, where it stands down briefly (a
+  // _resetView mid-pinch would flicker against Leaflet's pinch
+  // transform).
   assert.doesNotMatch(mapSrc, /_zoomGesture/);
   assert.doesNotMatch(mapSrc, /_lastUserZoomMs/);
   assert.doesNotMatch(mapSrc, /_lastZoomEndMs/);
+  assert.match(mapSrc, /zoom", \(e\) => \{[\s\S]*?e\?\.pinch/);
   assert.match(
     mapSrc,
-    /if \(this\.follow\) \{\n {8}this\.map\.panTo\(snap\.drPosition, \{ animate: false \}\);/,
+    /this\.follow &&\n {6}this\.followTarget &&\n {6}Date\.now\(\) - \(this\._lastPinchMs \?\? 0\) > 300/,
   );
-  assert.doesNotMatch(mapSrc, /map\.fire\("drwheel"\)/);
+  // Pinch: the boat is snapped to the center at touchstart (before
+  // Leaflet captures the gesture anchor), from an ancestor in capture
+  // phase — at-target listeners run in registration order and
+  // Leaflet's own handler was registered first.
+  assert.match(
+    mapSrc,
+    /mapEl\.parentElement \?\? this\.mapEl\)\.addEventListener\(\s*"touchstart"/,
+  );
+  assert.match(mapSrc, /e\.touches\.length !== 2/);
+  // Double-click zoom snaps the boat back after Leaflet's center jump.
+  assert.match(
+    mapSrc,
+    /dblclick", \(\) => \{[\s\S]*?this\.follow && this\.followTarget/,
+  );
+});
+
+test("custom element defined after its helper class (TDZ regression)", () => {
+  // customElements.define upgrades in-DOM elements synchronously, and
+  // the upgrade runs connectedCallback → initMap → new
+  // NauticalScaleControl() — if the define precedes the class
+  // declaration, any page with the element in static HTML hits
+  // "Cannot access 'NauticalScaleControl' before initialization" and
+  // initMap dies mid-setup (found driving the map headless). The
+  // define must come after the last class declaration.
+  const defineAt = mapSrc.indexOf('customElements.define("dr-map-view"');
+  const scaleAt = mapSrc.indexOf("class NauticalScaleControl");
+  assert.ok(defineAt > scaleAt, "define must follow the scale-control class");
+  assert.equal(
+    mapSrc.indexOf('customElements.define("dr-map-view"', defineAt + 1),
+    -1,
+    "exactly one define",
+  );
 });
 
 test("view-settle: zoom-dependent re-renders debounced under smooth zoom", () => {

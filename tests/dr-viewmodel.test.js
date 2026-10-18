@@ -1274,3 +1274,52 @@ test("horizontalAngleCplBodies: one or two observations, raw angle recorded", as
     /DR position required/,
   );
 });
+
+test("followTarget: live DR wins, stale DR transfers to the fix, no oscillation", async () => {
+  const vm = await loadVm();
+  const now = 1_000_000;
+  // Live DR position: the camera locks onto DR — a GPS fix ticking
+  // more often than the DR engine must not drag the view between the
+  // two marks.
+  assert.deepEqual(
+    vm.followTarget(
+      {
+        drPosition: [60.1, 24.9],
+        drTimeMs: now - 500,
+        gpsPosition: [60.2, 25.0],
+      },
+      now,
+    ),
+    [60.1, 24.9],
+  );
+  // DR engine idle (position stale): one clean transfer to the GNSS
+  // fix — the only live boat position.
+  assert.deepEqual(
+    vm.followTarget(
+      {
+        drPosition: [60.1, 24.9],
+        drTimeMs: now - vm.DR_LIVE_MS - 1,
+        gpsPosition: [60.2, 25.0],
+      },
+      now,
+    ),
+    [60.2, 25.0],
+  );
+  // Before the first DR position arrives at all, the fix is the only
+  // boat position there is.
+  assert.deepEqual(
+    vm.followTarget({ gpsPosition: [60.2, 25.0] }, now),
+    [60.2, 25.0],
+  );
+  // DR stale and no fix at all (GNSS denied, engine dead): hold the
+  // last DR mark — nothing better exists.
+  assert.deepEqual(
+    vm.followTarget(
+      { drPosition: [60.1, 24.9], drTimeMs: now - vm.DR_LIVE_MS - 1 },
+      now,
+    ),
+    [60.1, 24.9],
+  );
+  // Nothing yet: nothing to follow.
+  assert.equal(vm.followTarget({}, now), null);
+});

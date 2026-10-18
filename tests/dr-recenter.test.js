@@ -64,6 +64,25 @@ test("dr-map-view: floats a recenter control toggling follow mode", () => {
   // view; the map still opens centered on the vessel via the one-shot
   // fit in render().
   assert.match(mapSrc, /this\.follow = false;/);
+  // Engaging follow flips Leaflet's gesture anchors to "center" so
+  // pinch and double-click zoom keep the boat dead-center (the wheel
+  // handler checks follow itself).
+  assert.match(
+    mapSrc,
+    /setFollow\(on\) \{[\s\S]*?map\.options\.touchZoom = on \? "center" : true;/,
+  );
+  assert.match(
+    mapSrc,
+    /map\.options\.doubleClickZoom = on \? "center" : true;/,
+  );
+  // Keyboard pans never fire dragstart — while following, the keyboard
+  // handler stands down entirely so the view can't drift off the DR
+  // position.
+  assert.match(
+    mapSrc,
+    /setFollow\(on\) \{[\s\S]*?if \(on\) map\.keyboard\?\.disable\(\);/,
+  );
+  assert.match(mapSrc, /else map\.keyboard\?\.enable\(\);/);
 });
 
 test("dr-map-view: the recenter button reflects the follow flag", () => {

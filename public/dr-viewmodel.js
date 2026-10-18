@@ -3284,3 +3284,30 @@ function inlineMd(s) {
       '<a href="$2" target="_blank" rel="noopener">$1</a>',
     );
 }
+
+/** How long a DR position counts as live for the follow camera before
+ * the DR engine counts as idle — generous over the engine's 1 Hz tick
+ * so ordinary dropouts don't flip the camera to the GNSS fix. */
+export const DR_LIVE_MS = 10_000;
+
+/**
+ * The position the follow camera locks onto: the DR position while it
+ * is live — GPS fixes ticking more often than the DR engine must
+ * never drag the view back and forth between the two marks — and the
+ * GNSS fix once the DR position goes stale (engine idle: moored, no
+ * heading source), which is one clean transfer rather than an
+ * oscillation. Before the first DR position arrives at all, the fix
+ * is the only boat position there is.
+ *
+ * @param {object|null} snap - view-model snapshot (drPosition,
+ *   drTimeMs, gpsPosition)
+ * @param {number} [now] - evaluation instant, ms epoch
+ * @returns {[number, number]|null} [lat, lng] to center the camera on
+ */
+export function followTarget(snap, now = Date.now()) {
+  const dr = snap?.drPosition ?? null;
+  const gps = snap?.gpsPosition ?? null;
+  const t = snap?.drTimeMs;
+  const drLive = dr != null && typeof t === "number" && now - t < DR_LIVE_MS;
+  return drLive ? dr : (gps ?? dr);
+}

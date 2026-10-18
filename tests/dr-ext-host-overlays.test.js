@@ -462,6 +462,41 @@ test("makeMethods: map.center / map.fitBounds validate params", async () => {
   await assert.rejects(api["map.center"]({ position: [24, 60] })); // no chart
 });
 
+test("makeMethods: map.center / map.fitBounds refused while follow engaged", async () => {
+  // Center-on-vessel owns the view while engaged: freeform view moves
+  // (an extension's included) only happen once follow is released.
+  const { host } = makeOverlayHost();
+  const api = host.makeMethods({
+    kind: "widget",
+    extId: "ext",
+    conn: {
+      publish() {
+        return true;
+      },
+      close() {},
+    },
+  });
+  host.getMap = () => ({ follow: true, map: { setView() {}, fitBounds() {} } });
+  await assert.rejects(
+    api["map.center"]({ position: [24, 60] }),
+    /locked on the vessel/,
+  );
+  await assert.rejects(
+    api["map.fitBounds"]({ bounds: [23, 59, 25, 61] }),
+    /locked on the vessel/,
+  );
+  // Released follow lets the moves through again.
+  host.getMap = () => ({
+    follow: false,
+    map: {
+      setView() {},
+      fitBounds() {},
+    },
+  });
+  await api["map.center"]({ position: [24, 60] });
+  await api["map.fitBounds"]({ bounds: [23, 59, 25, 61] });
+});
+
 test("syncOverlays: specs, runtime contexts, and state broadcast", () => {
   const { host, created } = makeOverlayHost();
   const ext = core
