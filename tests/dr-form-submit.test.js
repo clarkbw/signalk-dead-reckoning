@@ -135,6 +135,29 @@ test("sight panel: radar ranges parse the center coordinate prefix", () => {
   );
 });
 
+test("sight panel: chart picks seed the switched-to form's coord fieldset", () => {
+  // Regression (sea trial 2026-10): seedObjectPosition queried the
+  // coord fieldset at shadow-root level, and both the vertical and
+  // radar forms carry data-prefix="center" — the query returned the
+  // vertical form's (first in document order), so a "Radar range at"
+  // pick switched to the radar tab but seeded the hidden distance-CPL
+  // form, leaving the radar form's Object position empty.
+  const seed = sightSrc.slice(
+    sightSrc.indexOf("seedObjectPosition(lat, lon, mode, label, tMs"),
+    sightSrc.indexOf("updateVerticalDistance() {"),
+  );
+  assert.match(
+    seed,
+    /form\?\.querySelector\(\s*`fieldset\.coord\[data-prefix="\$\{target\}"\]`/,
+    "coord fieldset scoped to the switched-to form",
+  );
+  assert.doesNotMatch(
+    seed,
+    /shadowRoot\.querySelector\(\s*`fieldset\.coord/,
+    "no shadow-root-level coord fieldset lookup",
+  );
+});
+
 test("sight panel: bearing form carries the instrument selector", () => {
   // Provenance selector (work doc #33): hand compass vs radar.
   assert.match(

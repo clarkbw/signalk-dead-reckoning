@@ -990,9 +990,14 @@ class DrSightPanel extends HTMLElement {
       }
       if (!target) target = "objA";
     }
-    const fs = this.shadowRoot.querySelector(
-      `fieldset.coord[data-prefix="${target}"]`,
-    );
+    // Scope the coord fieldset to the switched-to form: bearing and
+    // hangle prefixes ("object", "objA"…) are unique in the shadow
+    // root, but both the vertical and radar forms carry a
+    // data-prefix="center" fieldset — a shadow-root query returns the
+    // vertical form's (first in document order), so a "Radar range
+    // at" pick seeded the hidden distance-CPL form and the radar
+    // form's Object position stayed empty.
+    const fs = form?.querySelector(`fieldset.coord[data-prefix="${target}"]`);
     if (typeof label === "string" && label.length > 0) {
       const nameInput = form?.querySelector(
         mode === "hangle"
