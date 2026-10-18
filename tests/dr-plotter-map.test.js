@@ -132,6 +132,55 @@ test("range rings: GPS-centered, zoom-respaced, layer wiring", () => {
   assert.match(mapSrc, /this\.renderRangeRings\(\);/);
 });
 
+test("follow mode: off by default, ◎ toggles, drag lets go", () => {
+  // Follow starts OFF — the map opens centered on the vessel via the
+  // one-shot fit, but the helm keeps control of the view.
+  assert.match(mapSrc, /this\.follow = false;/);
+  // The ◎ button is a toggle, not a one-way re-center.
+  assert.match(
+    mapSrc,
+    /recenterBtn\.addEventListener\("click", \(\) => this\.toggleFollow\(\)\)/,
+  );
+  assert.match(mapSrc, /toggleFollow\(\) \{/);
+  assert.match(mapSrc, /setFollow\(on\) \{/, "single state mirror");
+  // Dragging the chart is an explicit "leave me here".
+  assert.match(
+    mapSrc,
+    /dragstart", \(\) => \{[\s\S]*?this\.setFollow\(false\)/,
+  );
+});
+
+test("open-centered: one-shot fit on the first GPS fix or DR position", () => {
+  const render = mapSrc.slice(
+    mapSrc.indexOf("render(snap) {"),
+    mapSrc.indexOf("renderCandidate(candidate) {"),
+  );
+  // GPS fix fits the view once; a first DR position does it too when
+  // no fix has arrived — but never after the helm has dragged.
+  assert.match(render, /!this\._didInitialFit && !this\._userMoved/);
+});
+
+test("wheel zoom: fractional and settle-gated follow pan (regression)", () => {
+  // zoomSnap 0: continuous wheel zoom instead of whole-level jumps;
+  // a higher wheelPxPerZoomLevel keeps one detent from firing a
+  // whole level at once.
+  assert.match(mapSrc, /zoomSnap: 0/);
+  assert.match(mapSrc, /wheelPxPerZoomLevel: 120/);
+  // The follow pan stands down during a zoom gesture and through the
+  // settle window — a cursor-anchored zoom used to be yanked back to
+  // the DR position right after the wheel stopped.
+  assert.match(mapSrc, /zoomstart", \(\) => \{[\s\S]*?_zoomGesture = true/);
+  assert.match(
+    mapSrc,
+    /zoomend", \(\) => \{[\s\S]*?_lastZoomEndMs = Date\.now\(\)/,
+  );
+  assert.match(
+    mapSrc,
+    /this\.follow &&\n {8}!this\._zoomGesture &&/,
+    "follow pan suppressed while zooming",
+  );
+});
+
 test("pick menu: DR/GPS bearing rows and CPA readouts for both references", () => {
   const menu = mapSrc.slice(
     mapSrc.indexOf("showPickMenu(latlng, containerPoint, preset = null) {"),

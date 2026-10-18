@@ -44,10 +44,12 @@ test("dr-app: no longer wires the recenter button — the map owns it", () => {
   assert.doesNotMatch(appSrc, /\?\.recenter\(\)/);
 });
 
-test("dr-map-view: floats a recenter control wired to recenter()", () => {
+test("dr-map-view: floats a recenter control toggling follow mode", () => {
   // The control is a floating overlay styled like the divergence chip
-  // (bottom-left — the only free corner) and calls recenter() directly.
-  // Its bottom rides above the phone bottom bands via the offset var.
+  // (bottom-left — the only free corner). It toggles follow mode:
+  // engage re-centers on the DR position, disengage lets the map stay
+  // put. Its bottom rides above the phone bottom bands via the
+  // offset var.
   assert.match(mapSrc, /\.dr-recenter\s*\{/);
   assert.match(
     mapSrc,
@@ -56,18 +58,30 @@ test("dr-map-view: floats a recenter control wired to recenter()", () => {
   assert.match(mapSrc, /left: 8px;/);
   assert.match(
     mapSrc,
-    /recenterBtn\.addEventListener\("click", \(\) => this\.recenter\(\)\)/,
+    /recenterBtn\.addEventListener\("click", \(\) => this\.toggleFollow\(\)\)/,
   );
+  // Follow starts off by default — the helm keeps control of the
+  // view; the map still opens centered on the vessel via the one-shot
+  // fit in render().
+  assert.match(mapSrc, /this\.follow = false;/);
 });
 
 test("dr-map-view: the recenter button reflects the follow flag", () => {
-  // Engaged = auto-follow ON. Set on click/recenter(), cleared when the
-  // user drags the map (which pauses follow) — so a floating button
-  // with no heading still reads its state at a glance.
-  assert.match(mapSrc, /className = "dr-recenter engaged"/);
-  assert.match(mapSrc, /recenter\(\) \{[\s\S]*?classList\.add\("engaged"\)/);
-  assert.match(mapSrc, /dragstart[\s\S]*?classList\.remove\("engaged"\)/);
+  // Engaged = auto-follow ON. Toggled via setFollow() — the single
+  // state mirror shared by the button, the drag pause and recenter()
+  // — so a floating button with no heading still reads its state at
+  // a glance.
+  assert.match(mapSrc, /className = "dr-recenter"/);
+  assert.match(
+    mapSrc,
+    /setFollow\(on\) \{[\s\S]*?classList\.toggle\("engaged", on\)/,
+  );
+  assert.match(
+    mapSrc,
+    /dragstart[\s\S]*?this\.setFollow\(false\)/,
+    "dragging lets go of follow",
+  );
   // aria-pressed mirrors the visual state for assistive tech.
-  assert.match(mapSrc, /setAttribute\("aria-pressed", "true"\)/);
+  assert.match(mapSrc, /setAttribute\("aria-pressed", String\(on\)\)/);
   assert.match(mapSrc, /setAttribute\("aria-pressed", "false"\)/);
 });

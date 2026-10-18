@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Chartplotter zoom and follow-mode handling (helm feedback).** Wheel zoom is now continuous instead of a series of whole-level animated jumps (`zoomSnap: 0` fractional zoom — MapLibre vector charts zoom natively fractionally, raster tiles scale between integer levels — plus a halved wheel sensitivity, `wheelPxPerZoomLevel` 60 → 120), and the follow pan no longer yanks the chart center back mid-gesture or right after the wheel stops: while a zoom gesture is live and through a short settle window the follow pan stands down. Follow mode is now **off by default** — the map still opens centered on the vessel (one-shot fit on the first GPS fix, or the first DR position when no fix has arrived) but the helm keeps control of the view. The ◎ button is a real toggle: click to engage follow (and pan to the DR position), click again to let go; dragging the chart lets go as before.
+
 ## [0.14.0] - 2026-10-18
 
 ### Added

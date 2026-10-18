@@ -67,8 +67,8 @@ class DrMapView extends HTMLElement {
       /* Re-center (follow DR position) control: the bottom-left corner
          is its own — the Leaflet zoom + layers stack sits directly
          above it (bottom-left container margin clears the button).
-         Filled means auto-follow is ON; dragging the map pauses
-         follow and outlines the button. */
+         Follow is off by default; the button toggles it, so filled
+         means auto-follow is ON. Dragging the map also lets go. */
       .dr-recenter {
         position: absolute;
         bottom: calc(8px + var(--dr-map-bottom-offset, 0px));
@@ -313,18 +313,20 @@ class DrMapView extends HTMLElement {
 
     // Re-center (follow DR) control — floated over the map's bottom-left
     // corner now that the "Ghost Track" heading is gone, so the map
-    // opens higher with no chrome above it. Calls recenter() directly;
-    // the .engaged class mirrors the follow flag (set here, cleared on
-    // drag, re-set on click).
+    // opens higher with no chrome above it. A real toggle: follow is
+    // off by default, clicking engages it (and pans to the DR
+    // position), clicking again lets go. The .engaged class mirrors
+    // the follow flag via setFollow(); dragging the chart also lets
+    // go. aria-pressed carries the state for assistive tech.
     const recenterBtn = document.createElement("button");
     recenterBtn.type = "button";
     recenterBtn.id = "dr-recenter";
-    recenterBtn.className = "dr-recenter engaged";
+    recenterBtn.className = "dr-recenter";
     recenterBtn.textContent = "◎";
     recenterBtn.title = "Follow DR position";
     recenterBtn.setAttribute("aria-label", "Follow DR position");
-    recenterBtn.setAttribute("aria-pressed", "true");
-    recenterBtn.addEventListener("click", () => this.recenter());
+    recenterBtn.setAttribute("aria-pressed", "false");
+    recenterBtn.addEventListener("click", () => this.toggleFollow());
 
     const host = document.createElement("div");
     host.className = "map-host";
@@ -374,7 +376,14 @@ class DrMapView extends HTMLElement {
      * through the control. */
     this.toggleableLayers = new Set(["vectors", "rings", "laylines"]);
     this.tileLayers = {};
-    this.follow = true;
+    /** Follow mode: auto-center on the DR position each tick. Off by
+     * default — the helm pans and zooms freely and the map merely
+     * OPENS centered on the vessel (the one-shot fit in render());
+     * the ◎ button toggles it. */
+    this.follow = false;
+    /** True while the user has panned the chart — the one-shot
+     * open-centered fit stands down once they've taken over. */
+    this._userMoved = false;
     /**
      * Rendered AIS entries by target context (work doc #23) — markers
      * are reused across renderAis calls (position/style updates in
@@ -413,6 +422,16 @@ class DrMapView extends HTMLElement {
     this.map = L.map(this.mapEl, {
       center: [60, 24],
       zoom: 10,
+      // Fractional wheel zoom (zoomSnap 0): Leaflet's default snaps
+      // every wheel burst to a whole zoom level and plays a full
+      // zoom animation per level, which reads as a series of jerky
+      // jumps. Continuous zoom renders the accumulation directly —
+      // the MapLibre vector charts zoom natively fractionally, and
+      // raster tiles merely scale between integer levels. A higher
+      // wheelPxPerZoomLevel (Leaflet default 60) keeps a single
+      // detent from firing a whole level at once.
+      zoomSnap: 0,
+      wheelPxPerZoomLevel: 120,
       // Bottom-left, stacked above the re-center button (work doc
       // #26): the top corners belong to dr-app's floating controls.
       zoomControl: false,
@@ -451,10 +470,24 @@ class DrMapView extends HTMLElement {
         }),
       );
     });
+    // Wheel/pinch zoom and the follow pan fight each other: a
+    // cursor-anchored zoom shifts the center, and the next DR tick
+    // would yank it back mid-gesture — the center "moves after you
+    // stop scrolling". Track the gesture so the follow pan stands
+    // down while zooming (and through a short settle window after);
+    // follow resumes panning afterwards.
+    this.map.on("zoomstart", () => {
+      this._zoomGesture = true;
+    });
+    this.map.on("zoomend", () => {
+      this._zoomGesture = false;
+      this._lastZoomEndMs = Date.now();
+    });
     this.map.on("dragstart", () => {
-      this.follow = false;
-      this.recenterBtn?.classList.remove("engaged");
-      this.recenterBtn?.setAttribute("aria-pressed", "false");
+      // Dragging the chart is an explicit "leave me here": follow
+      // off, map stays where the helm put it.
+      this._userMoved = true;
+      this.setFollow(false);
     });
     // Measure tool (work doc #30): double-click ends and clears. The
     // duplicate-click guard in _addMeasureLeg catches the two clicks
@@ -737,11 +770,41 @@ class DrMapView extends HTMLElement {
     });
   }
 
-  /** @returns {void} */
+  /**
+   * Sets the follow mode and mirrors it on the ◎ button (filled =
+   * engaged). Shared by the button toggle, the drag pause and the
+   * programmatic recenter so the UI state can't drift from the flag.
+   *
+   * @param {boolean} on
+   * @returns {void}
+   */
+  setFollow(on) {
+    this.follow = on;
+    const btn = this.recenterBtn;
+    if (!btn) return;
+    btn.classList.toggle("engaged", on);
+    btn.setAttribute("aria-pressed", String(on));
+    const label = on
+      ? "Following the DR position — click to let go"
+      : "Follow DR position";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+  }
+
+  /** Toggles follow from the ◎ button: engaged → let go (the map
+   * stays put), released → re-engage and pan back to the DR
+   * position. */
+  toggleFollow() {
+    if (this.follow) {
+      this.setFollow(false);
+      return;
+    }
+    this.recenter();
+  }
+
+  /** Re-engages follow and pans to the last DR position. */
   recenter() {
-    this.follow = true;
-    this.recenterBtn?.classList.add("engaged");
-    this.recenterBtn?.setAttribute("aria-pressed", "true");
+    this.setFollow(true);
     if (this.lastDrPosition && this.map) {
       this.map.panTo(this.lastDrPosition);
     }
@@ -1400,7 +1463,27 @@ class DrMapView extends HTMLElement {
     // DR marker + uncertainty circle.
     if (snap.drPosition) {
       this.lastDrPosition = snap.drPosition;
-      if (this.follow) this.map.panTo(snap.drPosition, { animate: true });
+      // Follow is off by default — the map still opens centered on
+      // the vessel: when no GPS fix has provided the one-shot fit
+      // above, the first DR position does it (unless the helm has
+      // already moved the chart themselves).
+      if (!this._didInitialFit && !this._userMoved) {
+        this._didInitialFit = true;
+        this.map.setView(snap.drPosition, this.map.getZoom() || 12);
+      }
+      // Follow pan: skip while a zoom gesture is live or settling —
+      // a cursor-anchored wheel zoom shifts the center and an
+      // immediate panTo back would yank it (the center "moving after
+      // you stop scrolling"). Follow resumes after the settle
+      // window. Un-animated: a hard pan per DR tick can't queue up
+      // against Leaflet's own gesture animations.
+      if (
+        this.follow &&
+        !this._zoomGesture &&
+        Date.now() - (this._lastZoomEndMs ?? 0) > 1000
+      ) {
+        this.map.panTo(snap.drPosition, { animate: false });
+      }
       this.layers.drMarker.clearLayers();
       // The DR position plots as the navigator's mark: a boat glyph
       // rotated to the DR course (work doc #30), with the traditional
