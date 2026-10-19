@@ -848,7 +848,8 @@ export const OVERLAY_METHODS = {
 
   /**
    * Runs a manifest button action. Supported: `togglePanel` (opens or
-   * closes the named panel of the button's extension).
+   * closes the named panel of the button's extension), `openWindow` /
+   * `toggleWindow` (floating windows; see dr-ext-host-windows.js).
    *
    * @this {import("./dr-ext-host.js").PlotterExtHost}
    * @param {string} extId
@@ -857,19 +858,24 @@ export const OVERLAY_METHODS = {
    */
   runButtonAction(extId, button) {
     const action = button?.action;
-    if (action?.type !== "togglePanel") return;
-    const ext = this.compatible.get(extId);
-    const panel = ext?.panels.find((pn) => pn.id === action.panel);
-    if (!panel) return;
-    const ctx = this.panelCtxs.get(`${extId}/${panel.id}`);
-    if (ctx && this.openConfig?.ctx === ctx) {
+    if (action?.type === "togglePanel") {
+      const ext = this.compatible.get(extId);
+      const panel = ext?.panels.find((pn) => pn.id === action.panel);
+      if (!panel) return;
+      const ctx = this.panelCtxs.get(`${extId}/${panel.id}`);
+      if (ctx && this.openConfig?.ctx === ctx) {
+        this.closeConfigDialog();
+        return;
+      }
       this.closeConfigDialog();
+      const opened = this.ensurePanelCtx(extId, panel, null);
+      opened.dialog.showModal();
+      this.openConfig = { ctx: opened, dialog: opened.dialog, instanceId: null };
       return;
     }
-    this.closeConfigDialog();
-    const opened = this.ensurePanelCtx(extId, panel, null);
-    opened.dialog.showModal();
-    this.openConfig = { ctx: opened, dialog: opened.dialog, instanceId: null };
+    if (action?.type === "openWindow" || action?.type === "toggleWindow") {
+      this.runWindowButton(extId, button, action);
+    }
   },
 
   /**

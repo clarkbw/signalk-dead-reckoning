@@ -12,11 +12,12 @@
  * `panels.iframe` (configuration panels), `signalk.stream`,
  * `signalk.put`, `background.iframe` (headless runtimes),
  * `overlays.image` (map layers), `map` (viewport read/drive), `units`
- * (preferred units) and `buttons` (mapToolbar entries). Widget cells
- * reuse the webapp's visual language (translucent panel + corner
- * brackets from dr-theme.js) so hosted widgets sit in the same frame
- * as `.dr-tools`/`.dr-gps`; the extension's own content stays inside
- * its iframe and is extension-owned.
+ * (preferred units), `buttons` (mapToolbar entries) and `windows`
+ * (floating windows over the chart). Widget cells reuse the webapp's
+ * visual language (translucent panel + corner brackets from
+ * dr-theme.js) so hosted widgets sit in the same frame as
+ * `.dr-tools`/`.dr-gps`; the extension's own content stays inside its
+ * iframe and is extension-owned.
  *
  * The wire protocol is `vendor/plotterext-bus` (host entry):
  * JSON-RPC 2.0 in a `plotterExt/1` envelope over postMessage, origin
@@ -32,6 +33,7 @@
 
 import * as core from "./dr-ext-host-core.js";
 import { OVERLAY_METHODS } from "./dr-ext-host-overlays.js";
+import { WINDOW_METHODS } from "./dr-ext-host-windows.js";
 import { THEME_CSS } from "./dr-theme.js";
 import {
   HostConnection,
@@ -64,12 +66,14 @@ const IFRAME_SANDBOX = core.IFRAME_SANDBOX;
  * are headless (hidden) frames running extension runtimes.
  *
  * @typedef {object} ExtContext
- * @property {"widget"|"panel"|"background"} kind
+ * @property {"widget"|"panel"|"background"|"window"} kind
  * @property {string} extId
  * @property {string} id - widget, panel or background manifest-local id
  * @property {string|null} instanceId - widget placement id (widgets)
  * @property {string|null} targetInstance - configured widget (config panels)
  * @property {string|null} targetWidget
+ * @property {string|null} windowId - the window itself (window contexts)
+ * @property {object|null} params - the params the window opened with
  * @property {object|null} manifestEntry - the widget/panel/background entry
  * @property {HTMLIFrameElement} iframe
  * @property {HTMLDialogElement|null} dialog - persistent chrome (panels)
@@ -92,6 +96,9 @@ export class PlotterExtHost {
    * @param {() => boolean} [opts.getFollow] - whether center-on-vessel
    *   (follow) is engaged: while it is, the view is locked and freeform
    *   extension moves are refused
+   * @param {{width: number, height: number}} [opts.getArea] - the
+   *   window area (the viewport part windows may occupy; the full
+   *   viewport by default)
    * @param {{depth: string}} [opts.units] - the user's preferred units
    *   (`units.get`)
    * @param {Storage} [opts.storage]
@@ -103,12 +110,19 @@ export class PlotterExtHost {
     this.mount = opts.mount;
     this.getMap = opts.getMap ?? (() => null);
     this.getFollow = opts.getFollow ?? (() => false);
+    this.getArea =
+      opts.getArea ??
+      (() => ({
+        width: globalThis.innerWidth ?? 0,
+        height: globalThis.innerHeight ?? 0,
+      }));
     this.units = opts.units ?? { depth: "m" };
     this.storage = opts.storage ?? globalThis.localStorage;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     this.origin = opts.origin ?? globalThis.location?.origin ?? "";
     this.stateStore = new core.StateStore(this.storage);
     this.overlayStore = new core.OverlayStateStore(this.storage);
+    this.geometryStore = new core.WindowGeometryStore(this.storage);
     this.pathReg = new core.PathRefRegistry();
 
     /** @type {Map<string, object>} compatible extId → filtered bundle */
@@ -121,6 +135,28 @@ export class PlotterExtHost {
     this.panelCtxs = new Map();
     /** @type {Map<string, ExtContext>} background key (ext/bgId) → ctx */
     this.bgCtxs = new Map();
+    /** @type {Map<string, ExtContext>} windowId → ctx */
+    this.windowCtxs = new Map();
+    /** @type {Map<string, object>} windowId → window record
+     * (state + chrome refs; the shape windows speak) */
+    this.windowRecords = new Map();
+    /** @type {number} window id sequence */
+    this.windowSeq = 0;
+    /** @type {number} raise counter (z-order cycles in the plane) */
+    this.windowZ = 0;
+    /** @type {string|null} windowId of the open modal, if any */
+    this.modalWindowId = null;
+    /** @type {HTMLElement|null} modal backdrop */
+    this.modalBackdrop = null;
+    /** @type {(() => void)|null} modal Escape handler teardown */
+    this.modalEscapeOff = null;
+    /** @type {Map<string, string>} "extId/buttonId" → windowId (the
+     * window a toolbar button opened) */
+    this.buttonWindows = new Map();
+    /** @type {HTMLElement|null} window chrome styles */
+    this.windowStyle = null;
+    /** @type {(() => void)|null} viewport resize teardown */
+    this.windowResizeOff = null;
     /** @type {Set<ExtContext>} every live context */
     this.allCtxs = new Set();
     /** @type {Map<string, Map<string, object>>} extId → overlayId → spec */
@@ -192,7 +228,8 @@ export class PlotterExtHost {
   }
 
   /**
-   * Stops polling (page teardown) and drops overlay retry timers.
+   * Stops polling (page teardown), drops overlay retry timers and
+   * unhooks the window resize listener.
    *
    * @returns {void}
    */
@@ -203,6 +240,8 @@ export class PlotterExtHost {
       clearTimeout(timer);
     }
     this.overlayRetries.clear();
+    this.windowResizeOff?.();
+    this.windowResizeOff = null;
   }
 
   /**
@@ -229,7 +268,7 @@ export class PlotterExtHost {
   /**
    * Re-runs discovery and reconciles: prune placements whose
    * extension/widget vanished, tear their contexts down, ensure
-   * contexts for survivors, preload `whileEnabled` panels.
+   * contexts for survivors, close windows of vanished extensions.
    *
    * @returns {Promise<void>}
    */
@@ -271,22 +310,12 @@ export class PlotterExtHost {
     }
 
     // Panels: tear down contexts of vanished extensions (and close
-    // their dialogs); preload `whileEnabled` panels — their iframes
-    // load inside a closed <dialog>, which is still in the document.
+    // their dialogs). Panels load when first opened — upstream dropped
+    // panel `whileEnabled` (absent/unknown = onOpen), so nothing is
+    // preloaded here; background runtimes are the sanctioned way to
+    // run while unseen.
     for (const ctx of [...this.panelCtxs.values()]) {
       if (!this.compatible.has(ctx.extId)) this.teardownPanelCtx(ctx);
-    }
-    for (const [extId, ext] of this.compatible) {
-      for (const panel of ext.panels) {
-        // Preload only when not live at all — a parked targeted config
-        // panel must not restart (its iframe would reload) on a poll.
-        if (
-          panel.lifecycle === "whileEnabled" &&
-          !this.panelCtxs.has(`${extId}/${panel.id}`)
-        ) {
-          this.ensurePanelCtx(extId, panel, null);
-        }
-      }
     }
 
     // Chart layers: reconcile background runtimes and overlay state
@@ -296,6 +325,15 @@ export class PlotterExtHost {
     }
     for (const [extId, ext] of this.compatible) {
       this.syncOverlays(extId, ext);
+    }
+
+    // Windows: an extension that left the collection loses its
+    // windows — silently, per the spec: none of its contexts remain,
+    // so no event is sent (window phase, work doc #27).
+    for (const record of [...this.windowRecords.values()]) {
+      if (!this.compatible.has(record.extId)) {
+        this.closeWindowsFor(record.extId);
+      }
     }
     this.renderButtons();
     if (this.layersDialog?.open) this.renderLayersDialog();
@@ -390,6 +428,10 @@ export class PlotterExtHost {
         instanceId: ctx.instanceId,
         targetInstance: ctx.targetInstance,
         targetWidget: ctx.targetWidget,
+        // Window contexts add the window's id and the params it was
+        // opened with; every other kind carries nulls.
+        windowId: ctx.windowId ?? null,
+        params: ctx.params ?? null,
       },
       methods: this.makeMethods(ctx),
       onError: (err) => console.warn("[plotterext]", ctx.extId, err),
@@ -435,10 +477,10 @@ export class PlotterExtHost {
   /**
    * Creates (or returns) a panel context. The context owns a
    * persistent `<dialog>` — `close()` hides it without destroying the
-   * iframe, which is what makes `keepAlive`/`whileEnabled` panels
-   * survive close/reopen. A kept-alive config panel is pinned to one
-   * widget target (its handshake must not lie), so re-targeting
-   * restarts the context.
+   * iframe, which is what makes `keepAlive` panels survive
+   * close/reopen. A kept-alive config panel is pinned to one widget
+   * target (its handshake must not lie), so re-targeting restarts the
+   * context.
    *
    * @param {string} extId
    * @param {object} panel - manifest panel entry
@@ -501,11 +543,8 @@ export class PlotterExtHost {
     dlg.appendChild(footer);
     dlg.addEventListener("close", () => {
       if (this.openConfig?.dialog === dlg) this.openConfig = null;
-      // onOpen panels die on close; keepAlive/whileEnabled stay parked.
-      if (
-        panel.lifecycle !== "keepAlive" &&
-        panel.lifecycle !== "whileEnabled"
-      ) {
+      // onOpen panels die on close; keepAlive stays parked.
+      if (panel.lifecycle !== "keepAlive") {
         this.teardownPanelCtx(ctx);
       }
     });
@@ -682,6 +721,11 @@ export class PlotterExtHost {
         this.publishEvent(ctx, p);
         return {};
       },
+      "ui.openWindow": async (params) => this.openWindow(ctx, params),
+      "ui.updateWindow": async (params) => this.updateWindow(ctx, params),
+      "ui.focusWindow": async (params) => this.focusWindow(ctx, params),
+      "ui.closeWindow": async (params) => this.closeWindow(ctx, params),
+      "ui.listWindows": async () => this.listWindows(ctx),
     };
   }
 
@@ -1025,6 +1069,11 @@ export class PlotterExtHost {
 // dr-ext-host-overlays.js and mount onto the prototype, keeping this
 // module's widget plumbing separate from the overlay surface.
 Object.assign(PlotterExtHost.prototype, OVERLAY_METHODS);
+
+// Floating-window machinery (window phase): the ui.*Window methods,
+// the window chrome, the modal plane and the window-flavored button
+// actions live in dr-ext-host-windows.js, same pattern.
+Object.assign(PlotterExtHost.prototype, WINDOW_METHODS);
 
 /** Base class that also loads under Node (tests import the manager
  * from this module — only the element needs a browser). */

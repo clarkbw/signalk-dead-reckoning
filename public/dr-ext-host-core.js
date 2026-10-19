@@ -21,10 +21,10 @@ export const GRID_COLS = 2;
 export const GRID_ROWS = 2;
 
 /** Capabilities this host advertises (work doc #27 v1 scope, plus the
- * chart-layer phase): widgets and panels, headless background runtimes,
- * image map overlays, the map viewport, and the user's units. `buttons`
- * covers mapToolbar entries; `signalk.put` is offered but only works
- * for write-capable sessions. */
+ * chart-layer and window phases): widgets and panels, headless
+ * background runtimes, image map overlays, the map viewport, the
+ * user's units, floating windows. `buttons` covers mapToolbar entries;
+ * `signalk.put` is offered but only works for write-capable sessions. */
 export const HOST_CAPABILITIES = [
   "widgets",
   "panels.iframe",
@@ -35,6 +35,7 @@ export const HOST_CAPABILITIES = [
   "map",
   "units",
   "buttons",
+  "windows",
 ];
 
 /** API major version this host implements. */
@@ -102,6 +103,347 @@ export function backgroundUsable(entry) {
 /** Overlay bands the host composites (above the charts, in manifest
  * order; `aboveResources` sits above those). */
 export const OVERLAY_BANDS = ["aboveCharts", "aboveResources"];
+
+// ---- windows: geometry and policy ---------------------------------------
+
+/** The nine window anchors (Plotter Extensions API v1, *Windows*).
+ * Position is `anchor` plus an `offset` measured inward from the
+ * anchored edges; on a centered axis a positive offset moves right or
+ * down. */
+export const WINDOW_ANCHORS = [
+  "top-left",
+  "top-center",
+  "top-right",
+  "center-left",
+  "center",
+  "center-right",
+  "bottom-left",
+  "bottom-center",
+  "bottom-right",
+];
+
+/** Most windows the host keeps open at once (host-wide, hidden ones
+ * included — a `windows.limit` refusal past this). */
+export const WINDOW_LIMIT = 6;
+
+/** The host's minimum usable window size (CSS px): a request smaller
+ * than this is honored at this floor (or the window area's size when
+ * even that is smaller — the area always wins). */
+export const WINDOW_MIN = { width: 160, height: 120 };
+
+/** Window-area width at or below which windows go `fullscreen` (the
+ * app's phone-first breakpoint; `presentationFor`). */
+export const FULLSCREEN_BREAKPOINT = 600;
+
+/**
+ * Parses one geometry size/offset value: a CSS-pixel number or a
+ * percentage string of the window area's axis.
+ *
+ * @param {unknown} v
+ * @returns {{v: number, unit: "px"|"pct"}|null} null when malformed
+ */
+export function parseWindowLength(v) {
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? { v, unit: "px" } : null;
+  }
+  if (typeof v === "string") {
+    const m = /^(-?\d+(?:\.\d+)?)%$/.exec(v);
+    if (m) return { v: Number(m[1]), unit: "pct" };
+  }
+  return null;
+}
+
+/**
+ * Validates a `geometry` request into its normalized form. `null` (or
+ * a non-object) means malformed → `windows.badRequest`; the caller
+ * decides whether an *absent* geometry is an error (it is not — the
+ * host chooses).
+ *
+ * @param {unknown} geometry
+ * @returns {{anchor: string,
+ *   offsetX: {v: number, unit: string}, offsetY: {v: number, unit: string},
+ *   width: {v: number, unit: string}|null,
+ *   height: {v: number, unit: string}|null,
+ *   minWidth: {v: number, unit: string}|null,
+ *   minHeight: {v: number, unit: string}|null,
+ *   maxWidth: {v: number, unit: string}|null,
+ *   maxHeight: {v: number, unit: string}|null}|null}
+ */
+export function parseWindowGeometry(geometry) {
+  if (!geometry || typeof geometry !== "object" || Array.isArray(geometry)) {
+    return null;
+  }
+  const len = (v) => (v === undefined ? null : parseWindowLength(v));
+  const width = len(geometry.width);
+  const height = len(geometry.height);
+  const minWidth = len(geometry.minWidth);
+  const minHeight = len(geometry.minHeight);
+  const maxWidth = len(geometry.maxWidth);
+  const maxHeight = len(geometry.maxHeight);
+  const hasSize =
+    width !== null ||
+    height !== null ||
+    minWidth !== null ||
+    minHeight !== null ||
+    maxWidth !== null ||
+    maxHeight !== null;
+  if (
+    (geometry.width !== undefined && width === null) ||
+    (geometry.height !== undefined && height === null) ||
+    (geometry.minWidth !== undefined && minWidth === null) ||
+    (geometry.minHeight !== undefined && minHeight === null) ||
+    (geometry.maxWidth !== undefined && maxWidth === null) ||
+    (geometry.maxHeight !== undefined && maxHeight === null)
+  ) {
+    return null;
+  }
+  if (
+    geometry.offset !== undefined &&
+    (geometry.offset === null ||
+      typeof geometry.offset !== "object" ||
+      Array.isArray(geometry.offset))
+  ) {
+    return null;
+  }
+  const offsetX = parseWindowLength(geometry?.offset?.x ?? 0);
+  const offsetY = parseWindowLength(geometry?.offset?.y ?? 0);
+  if (offsetX === null || offsetY === null) return null;
+  const anchor =
+    geometry.anchor === undefined ? "top-right" : geometry.anchor;
+  if (!WINDOW_ANCHORS.includes(anchor)) return null;
+  // A geometry with no size fields at all is malformed — there is
+  // nothing to place.
+  if (!hasSize) return null;
+  return {
+    anchor,
+    offsetX,
+    offsetY,
+    width,
+    height,
+    minWidth,
+    minHeight,
+    maxWidth,
+    maxHeight,
+  };
+}
+
+/**
+ * Resolves a length against its axis (px straight through, pct of the
+ * given extent).
+ *
+ * @param {{v: number, unit: string}|null} len
+ * @param {number} extent - the axis's size in CSS px
+ * @returns {number|null}
+ */
+function lengthPx(len, extent) {
+  if (!len) return null;
+  return len.unit === "pct" ? (len.v / 100) * extent : len.v;
+}
+
+/**
+ * Turns a normalized geometry request into the window's actual bounds
+ * inside the window area: sizes from px or percentages, min/max
+ * limits applied, the host's minimum usable size enforced, positioned
+ * by anchor + inward offset, and clamped to stay inside the area (the
+ * area always wins over the minimum size).
+ *
+ * @param {object} geom - parseWindowGeometry() output
+ * @param {{width: number, height: number}} area - the window area
+ * @param {{width: number, height: number}} [min] - host minimum size
+ * @returns {{x: number, y: number, width: number, height: number}}
+ */
+export function resolveWindowGeometry(geom, area, min = WINDOW_MIN) {
+  const resolve = (len, fallback, extent) =>
+    lengthPx(len, extent) ?? fallback;
+  // Unrequested sizes default to 40% of their axis (host's choice —
+  // "a third of the screen" territory), then the limits apply.
+  let w = resolve(geom.width, area.width * 0.4, area.width);
+  let h = resolve(geom.height, area.height * 0.4, area.height);
+  const minW = resolve(geom.minWidth, 0, area.width);
+  const minH = resolve(geom.minHeight, 0, area.height);
+  const maxW = resolve(geom.maxWidth, area.width, area.width);
+  const maxH = resolve(geom.maxHeight, area.height, area.height);
+  w = Math.min(Math.max(w, minW, Math.min(min.width, area.width)), maxW);
+  h = Math.min(Math.max(h, minH, Math.min(min.height, area.height)), maxH);
+  // The window area itself is the hard ceiling.
+  w = Math.max(1, Math.min(w, area.width));
+  h = Math.max(1, Math.min(h, area.height));
+  const ox = lengthPx(geom.offsetX, area.width) ?? 0;
+  const oy = lengthPx(geom.offsetY, area.height) ?? 0;
+  let x;
+  if (geom.anchor.endsWith("-left")) x = ox;
+  else if (geom.anchor.endsWith("-right")) x = area.width - w - ox;
+  else x = (area.width - w) / 2 + ox;
+  let y;
+  if (geom.anchor.startsWith("top-")) y = oy;
+  else if (geom.anchor.startsWith("bottom-")) y = area.height - h - oy;
+  else y = (area.height - h) / 2 + oy;
+  x = Math.min(Math.max(x, 0), Math.max(0, area.width - w));
+  y = Math.min(Math.max(y, 0), Math.max(0, area.height - h));
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(w),
+    height: Math.round(h),
+  };
+}
+
+/**
+ * Re-clamps already-placed bounds into a (possibly changed) window
+ * area: size never exceeds the area, position keeps the window fully
+ * inside. Used when the viewport resizes or rotates.
+ *
+ * @param {{x: number, y: number, width: number, height: number}} bounds
+ * @param {{width: number, height: number}} area
+ * @param {{width: number, height: number}} [min]
+ * @returns {{x: number, y: number, width: number, height: number}}
+ */
+export function clampWindowBounds(bounds, area, min = WINDOW_MIN) {
+  const w = Math.max(
+    1,
+    Math.min(
+      Math.max(bounds.width, Math.min(min.width, area.width)),
+      area.width,
+    ),
+  );
+  const h = Math.max(
+    1,
+    Math.min(
+      Math.max(bounds.height, Math.min(min.height, area.height)),
+      area.height,
+    ),
+  );
+  return {
+    width: Math.round(w),
+    height: Math.round(h),
+    x: Math.round(Math.min(Math.max(bounds.x, 0), Math.max(0, area.width - w))),
+    y: Math.round(
+      Math.min(Math.max(bounds.y, 0), Math.max(0, area.height - h)),
+    ),
+  };
+}
+
+/**
+ * The presentation a window gets at this window-area width: the
+ * phone-first breakpoint goes `fullscreen` (a floating window would
+ * not fit meaningfully), everything above stays `floating`.
+ *
+ * @param {number} areaWidth
+ * @returns {"floating"|"fullscreen"}
+ */
+export function presentationFor(areaWidth) {
+  return areaWidth <= FULLSCREEN_BREAKPOINT ? "fullscreen" : "floating";
+}
+
+/**
+ * The geometry a window's settled bounds represent, in the form the
+ * geometry store persists: the anchor it opened with, its offset
+ * measured inward from the anchored edges, and its px size — so the
+ * next open with the same restoreKey lands where the user left it,
+ * re-clamped against whatever the window area is then.
+ *
+ * @param {{x: number, y: number, width: number, height: number}} bounds
+ * @param {{width: number, height: number}} area
+ * @param {string} anchor
+ * @returns {object} a parseWindowGeometry-shaped request (px units)
+ */
+export function geometryFromBounds(bounds, area, anchor) {
+  let offsetX;
+  if (anchor.endsWith("-left")) offsetX = bounds.x;
+  else if (anchor.endsWith("-right")) offsetX = area.width - (bounds.x + bounds.width);
+  else offsetX = bounds.x - (area.width - bounds.width) / 2;
+  let offsetY;
+  if (anchor.startsWith("top-")) offsetY = bounds.y;
+  else if (anchor.startsWith("bottom-")) offsetY = area.height - (bounds.y + bounds.height);
+  else offsetY = bounds.y - (area.height - bounds.height) / 2;
+  return {
+    anchor,
+    offset: { x: offsetX, y: offsetY },
+    width: bounds.width,
+    height: bounds.height,
+  };
+}
+
+/**
+ * localStorage key for remembered window geometry (`restoreKey`, work
+ * doc #27 window phase) — per extension, per device like the layout.
+ *
+ * @param {string} [prefix]
+ * @returns {string}
+ */
+export function windowsStateKey(prefix = "dr.plotterext") {
+  return `${prefix}.windows.v1`;
+}
+
+/**
+ * Remembered window geometry, keyed per extension and restoreKey.
+ * Storage is injected so Node tests can pass a fake. Values are
+ * normalized geometry requests (px); `resolveWindowGeometry` clamps
+ * them against the window area of the day on the next open.
+ */
+export class WindowGeometryStore {
+  /**
+   * @param {{getItem: (k: string) => string|null,
+   *           setItem: (k: string, v: string) => void}} storage
+   */
+  constructor(storage) {
+    this.storage = storage;
+    this.data = this.load();
+  }
+
+  /**
+   * @returns {Record<string, Record<string, object>>}
+   */
+  load() {
+    try {
+      const raw = this.storage.getItem(windowsStateKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * @returns {void}
+   */
+  save() {
+    this.storage.setItem(windowsStateKey(), JSON.stringify(this.data));
+  }
+
+  /**
+   * @param {string} extId
+   * @param {string} restoreKey
+   * @returns {object|null} the remembered geometry, or null
+   */
+  get(extId, restoreKey) {
+    return this.data[extId]?.[restoreKey] ?? null;
+  }
+
+  /**
+   * @param {string} extId
+   * @param {string} restoreKey
+   * @param {object} geometry - normalized geometry request
+   * @returns {void}
+   */
+  set(extId, restoreKey, geometry) {
+    if (!this.data[extId]) this.data[extId] = {};
+    this.data[extId][restoreKey] = geometry;
+    this.save();
+  }
+
+  /**
+   * Drops an extension's remembered geometry (extension vanished).
+   *
+   * @param {string} extId
+   * @returns {void}
+   */
+  dropExtension(extId) {
+    if (!(extId in this.data)) return;
+    delete this.data[extId];
+    this.save();
+  }
+}
 
 /**
  * Is an `overlays[]` entry usable? Only `image` overlays are hosted —
