@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Panel `whileEnabled` is no longer honored — upstream dropped it** (freeboard-sk #921): a panel loads when first opened (`onOpen`, the default) and dies on close; only `keepAlive` parks. The host no longer preloads `whileEnabled` panels inside closed dialogs — work that must run while unseen belongs in a background runtime (`background.iframe`), which the host has offered since the chart-layer phase.
 
 ### Fixed
+- **Stale observations no longer clog the pending-observations list.** Un-resolved LOPs/CPLs sat in the pending drawer forever no matter their age — a 36-day-old bearing from a port stay kept showing as work in progress. The list now drops un-resolved observations older than 24 h (`vm.isPendingStale`, `PENDING_MAX_AGE_MS`): a fix is a here-and-now operation — the running fix advances each observation to the current DR position — so anything older is chart history, not a constraint waiting for a partner. Chart/history surfaces are unaffected.
 - **Windows CI: source-structure tests no longer fail on CRLF checkouts.** The map/layout smoketests assert on `public/*.js` source structure with newline-sensitive regexes, which never matched once git's `autocrlf` converted the files to CRLF on a Windows runner. Both test readers now normalize CRLF → LF before matching.
 
 ## [0.14.2] - 2026-10-19

@@ -773,6 +773,35 @@ test("needsPartner: true only for exactly one observation", async () => {
   assert.strictEqual(vm.needsPartner([{ id: 1 }, { id: 2 }]), false);
 });
 
+test("isPendingStale: un-resolved observations age out after a day", async () => {
+  const vm = await loadVm();
+  const now = Date.parse("2026-08-27T10:00:00Z");
+  assert.strictEqual(
+    vm.isPendingStale({ timestamp: "2026-08-27T09:00:00Z" }, now),
+    false,
+  );
+  assert.strictEqual(
+    vm.isPendingStale({ timestamp: "2026-08-26T10:00:01Z" }, now),
+    false,
+  );
+  // Exactly a day old is on the boundary — not yet stale.
+  assert.strictEqual(
+    vm.isPendingStale({ timestamp: "2026-08-26T10:00:00Z" }, now),
+    false,
+  );
+  // 36 days old — the motivating case.
+  assert.strictEqual(
+    vm.isPendingStale({ timestamp: "2026-07-22T10:00:00Z" }, now),
+    true,
+  );
+  // Custom horizon and no-timestamp rows never age out.
+  assert.strictEqual(
+    vm.isPendingStale({ timestamp: "2026-08-27T06:00:00Z" }, now, 60_000),
+    true,
+  );
+  assert.strictEqual(vm.isPendingStale({ timestamp: "" }, now), false);
+});
+
 test("resolvePreviewBody: splits the selection into lop/cpl ids", async () => {
   const vm = await loadVm();
   const body = vm.resolvePreviewBody([

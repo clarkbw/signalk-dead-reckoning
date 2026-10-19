@@ -3,7 +3,10 @@
  * doc #13 stage A). Un-resolved LOPs/CPLs (`used_in_fix_id IS NULL`)
  * used to be buried in a `<ul>` inside the sight-entry modal; they are
  * work-in-progress constraints and belong alongside the map, glanceable
- * without opening the entry form.
+ * without opening the entry form. Stale observations (older than a
+ * day, `vm.isPendingStale`) are dropped: a fix is a here-and-now
+ * operation, and last month's bearing is chart history, not a
+ * constraint waiting for a partner.
  *
  * Rows carry a select checkbox (drives the map highlight via
  * `dr-select-observation`), and edit/delete actions (stage D's CRUD
@@ -154,6 +157,9 @@ class DrPendingList extends HTMLElement {
         ...(data.cpls ?? []).map(vm.pendingCplRow),
       ]
         .filter((r) => !r.used)
+        // Stale observations are history, not pending work (a fix
+        // resolves against the current DR position).
+        .filter((r) => !vm.isPendingStale(r))
         // Oldest first — the running fix reads top-to-bottom.
         .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
       // Drop selections that no longer exist.

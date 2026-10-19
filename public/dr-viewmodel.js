@@ -1561,6 +1561,36 @@ export function needsPartner(rows) {
 }
 
 /**
+ * How long an un-resolved observation stays actionable in the pending
+ * list. A fix is a here-and-now operation — the running fix advances
+ * each observation to the current DR position — so a bearing taken a
+ * day ago is history, not work in progress. Chart/history surfaces
+ * keep showing old observations; only the pending list filters them.
+ *
+ * @type {number}
+ */
+export const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a pending row is too old to remain in the pending list
+ * (older than `PENDING_MAX_AGE_MS`). Rows with an unparseable
+ * timestamp never age out.
+ *
+ * @param {{timestamp: string}} row
+ * @param {number} [nowMs]
+ * @param {number} [maxAgeMs]
+ * @returns {boolean}
+ */
+export function isPendingStale(
+  row,
+  nowMs = Date.now(),
+  maxAgeMs = PENDING_MAX_AGE_MS,
+) {
+  const ts = Date.parse(row.timestamp);
+  return Number.isFinite(ts) && nowMs - ts > maxAgeMs;
+}
+
+/**
  * Builds the POST /fix/resolve body for a selected subset of pending
  * rows — the interactive what-if of work doc #13 stage B.
  *

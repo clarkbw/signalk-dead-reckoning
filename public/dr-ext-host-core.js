@@ -208,8 +208,7 @@ export function parseWindowGeometry(geometry) {
   const offsetX = parseWindowLength(geometry?.offset?.x ?? 0);
   const offsetY = parseWindowLength(geometry?.offset?.y ?? 0);
   if (offsetX === null || offsetY === null) return null;
-  const anchor =
-    geometry.anchor === undefined ? "top-right" : geometry.anchor;
+  const anchor = geometry.anchor === undefined ? "top-right" : geometry.anchor;
   if (!WINDOW_ANCHORS.includes(anchor)) return null;
   // A geometry with no size fields at all is malformed — there is
   // nothing to place.
@@ -253,8 +252,7 @@ function lengthPx(len, extent) {
  * @returns {{x: number, y: number, width: number, height: number}}
  */
 export function resolveWindowGeometry(geom, area, min = WINDOW_MIN) {
-  const resolve = (len, fallback, extent) =>
-    lengthPx(len, extent) ?? fallback;
+  const resolve = (len, fallback, extent) => lengthPx(len, extent) ?? fallback;
   // Unrequested sizes default to 40% of their axis (host's choice —
   // "a third of the screen" territory), then the limits apply.
   let w = resolve(geom.width, area.width * 0.4, area.width);
@@ -350,11 +348,13 @@ export function presentationFor(areaWidth) {
 export function geometryFromBounds(bounds, area, anchor) {
   let offsetX;
   if (anchor.endsWith("-left")) offsetX = bounds.x;
-  else if (anchor.endsWith("-right")) offsetX = area.width - (bounds.x + bounds.width);
+  else if (anchor.endsWith("-right"))
+    offsetX = area.width - (bounds.x + bounds.width);
   else offsetX = bounds.x - (area.width - bounds.width) / 2;
   let offsetY;
   if (anchor.startsWith("top-")) offsetY = bounds.y;
-  else if (anchor.startsWith("bottom-")) offsetY = area.height - (bounds.y + bounds.height);
+  else if (anchor.startsWith("bottom-"))
+    offsetY = area.height - (bounds.y + bounds.height);
   else offsetY = bounds.y - (area.height - bounds.height) / 2;
   return {
     anchor,

@@ -870,7 +870,11 @@ export const OVERLAY_METHODS = {
       this.closeConfigDialog();
       const opened = this.ensurePanelCtx(extId, panel, null);
       opened.dialog.showModal();
-      this.openConfig = { ctx: opened, dialog: opened.dialog, instanceId: null };
+      this.openConfig = {
+        ctx: opened,
+        dialog: opened.dialog,
+        instanceId: null,
+      };
       return;
     }
     if (action?.type === "openWindow" || action?.type === "toggleWindow") {

@@ -210,7 +210,10 @@ export const WINDOW_METHODS = {
       this.mount.appendChild(style);
       this.windowStyle = style;
     }
-    if (!this.windowResizeOff && typeof globalThis.addEventListener === "function") {
+    if (
+      !this.windowResizeOff &&
+      typeof globalThis.addEventListener === "function"
+    ) {
       const onResize = () => this.syncWindowsToArea();
       globalThis.addEventListener("resize", onResize);
       this.windowResizeOff = () =>
@@ -643,7 +646,10 @@ export const WINDOW_METHODS = {
     record.el.style.top = `${y}px`;
     record.el.style.width = `${width}px`;
     record.el.style.height = `${height}px`;
-    record.el.classList.toggle("fullscreen", record.presentation === "fullscreen");
+    record.el.classList.toggle(
+      "fullscreen",
+      record.presentation === "fullscreen",
+    );
   },
 
   /**
@@ -683,7 +689,11 @@ export const WINDOW_METHODS = {
    * @returns {void}
    */
   publishWindowState(record) {
-    this.publishToExtension(record.extId, "window.state", this.windowState(record));
+    this.publishToExtension(
+      record.extId,
+      "window.state",
+      this.windowState(record),
+    );
   },
 
   /**

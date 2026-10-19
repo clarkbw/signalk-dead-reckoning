@@ -159,10 +159,7 @@ test("parseWindowGeometry: defaults fill in, malformed is null", () => {
   // Malformed: not an object, unknown anchor, junk sizes, no sizes.
   assert.equal(core.parseWindowGeometry(null), null);
   assert.equal(core.parseWindowGeometry("40%"), null);
-  assert.equal(
-    core.parseWindowGeometry({ anchor: "left", width: 480 }),
-    null,
-  );
+  assert.equal(core.parseWindowGeometry({ anchor: "left", width: 480 }), null);
   assert.equal(core.parseWindowGeometry({ width: "wide" }), null);
   assert.equal(core.parseWindowGeometry({ offset: "16" }), null);
   assert.equal(core.parseWindowGeometry({ offset: { x: "z" } }), null);
@@ -248,12 +245,7 @@ test("presentationFor: the phone breakpoint goes fullscreen", () => {
 
 test("geometryFromBounds: settled bounds become the anchored request", () => {
   const area = { width: 1200, height: 800 };
-  for (const anchor of [
-    "top-left",
-    "top-right",
-    "bottom-center",
-    "center",
-  ]) {
+  for (const anchor of ["top-left", "top-right", "bottom-center", "center"]) {
     const g = core.geometryFromBounds(
       { x: 100, y: 50, width: 480, height: 240 },
       area,
@@ -298,7 +290,10 @@ test("windows joins the advertised capabilities", () => {
   assert.deepEqual([...compat.keys()], ["sounder"]);
   // Without `windows` a manifest requiring it is not offered at all.
   const caps = core.HOST_CAPABILITIES.filter((c) => c !== "windows");
-  assert.equal(core.compatibleExtensions({ sounder: windowManifest() }, caps).size, 0);
+  assert.equal(
+    core.compatibleExtensions({ sounder: windowManifest() }, caps).size,
+    0,
+  );
 });
 
 // ---- host: openWindow -------------------------------------------------------
@@ -339,11 +334,19 @@ test("openWindow: UNKNOWN_PANEL and windows.badRequest", () => {
     (err) => err.reason === "UNKNOWN_PANEL",
   );
   assert.throws(
-    () => host.openWindowFor("ext", { panel: "sounder", geometry: { anchor: "left" } }),
+    () =>
+      host.openWindowFor("ext", {
+        panel: "sounder",
+        geometry: { anchor: "left" },
+      }),
     (err) => err.reason === "windows.badRequest",
   );
   assert.throws(
-    () => host.openWindowFor("ext", { panel: "sounder", geometry: { width: "wide" } }),
+    () =>
+      host.openWindowFor("ext", {
+        panel: "sounder",
+        geometry: { width: "wide" },
+      }),
     (err) => err.reason === "windows.badRequest",
   );
 });
@@ -369,11 +372,21 @@ test("openWindow: modal rules — one at a time, no hiding", () => {
     (err) => err.reason === "windows.modalOpen",
   );
   assert.throws(
-    () => host.openWindowFor("ext", { panel: "sounder", modal: true, visible: false }),
+    () =>
+      host.openWindowFor("ext", {
+        panel: "sounder",
+        modal: true,
+        visible: false,
+      }),
     (err) => err.reason === "windows.badRequest",
   );
   assert.throws(
-    () => host.openWindowFor("ext", { panel: "sounder", modal: true, userClose: "hide" }),
+    () =>
+      host.openWindowFor("ext", {
+        panel: "sounder",
+        modal: true,
+        userClose: "hide",
+      }),
     (err) => err.reason === "windows.badRequest",
   );
 });
@@ -417,7 +430,12 @@ test("openWindow: remembered geometry wins over the request", () => {
   // The user settles it elsewhere (as the drag would).
   host.updateWindow(fakeCtx(), {
     windowId: first.windowId,
-    geometry: { anchor: "top-left", offset: { x: 20, y: 30 }, width: 200, height: 150 },
+    geometry: {
+      anchor: "top-left",
+      offset: { x: 20, y: 30 },
+      width: 200,
+      height: 150,
+    },
   });
   const stored = JSON.parse(storage.backing.get("dr.plotterext.windows.v1"));
   assert.equal(stored.ext.sounder.anchor, "top-left");
@@ -466,7 +484,11 @@ test("updateWindow: geometry fields merge, title and visibility publish state", 
 
   // Malformed patches are rejected without tearing anything down.
   assert.throws(
-    () => host.updateWindow(fakeCtx(), { windowId: state.windowId, geometry: "nope" }),
+    () =>
+      host.updateWindow(fakeCtx(), {
+        windowId: state.windowId,
+        geometry: "nope",
+      }),
     (err) => err.reason === "windows.badRequest",
   );
   assert.throws(
@@ -480,7 +502,11 @@ test("updateWindow: a modal window cannot hide", () => {
   enableExt(host);
   const state = host.openWindowFor("ext", { panel: "sounder", modal: true });
   assert.throws(
-    () => host.updateWindow(fakeCtx(), { windowId: state.windowId, visible: false }),
+    () =>
+      host.updateWindow(fakeCtx(), {
+        windowId: state.windowId,
+        visible: false,
+      }),
     (err) => err.reason === "windows.badRequest",
   );
 });
@@ -498,7 +524,8 @@ test("window identity: self-form resolves, foreign and unknown are refused", () 
   // Other extensions' windows are invisible to the caller.
   const a = host.openWindowFor("ext", { panel: "sounder" });
   assert.throws(
-    () => host.closeWindow(fakeCtx({ extId: "other" }), { windowId: a.windowId }),
+    () =>
+      host.closeWindow(fakeCtx({ extId: "other" }), { windowId: a.windowId }),
     (err) => err.reason === "windows.unknownId",
   );
   assert.throws(
@@ -549,7 +576,10 @@ test("closeWindow: window.closed reaches the owning extension's contexts", () =>
   assert.equal(closed[0].reason, "extension");
   assert.equal(eventsOf(stranger, "window.closed").length, 0);
   // The window's own context received it too — then went away.
-  assert.equal(ownConn.published.filter((e) => e.name === "window.closed").length, 1);
+  assert.equal(
+    ownConn.published.filter((e) => e.name === "window.closed").length,
+    1,
+  );
   assert.equal(host.windowCtxs.size, 0);
   assert.equal(host.allCtxs.has(ownCtx), false);
 });
@@ -579,7 +609,10 @@ test("refresh: a vanished extension loses its windows silently", async () => {
     }),
   });
   await host.refresh();
-  const state = host.openWindowFor("ext", { panel: "sounder", restoreKey: "k" });
+  const state = host.openWindowFor("ext", {
+    panel: "sounder",
+    restoreKey: "k",
+  });
   const ctx = host.windowCtxs.get(state.windowId);
   const conn = ctx.conn; // teardown nulls ctx.conn — capture first
 
@@ -763,13 +796,13 @@ test("the host wires the window surface structurally", () => {
     "ui.closeWindow",
     "ui.listWindows",
   ]) {
-    assert.ok(
-      hostSrc.includes(`"${method}"`),
-      `method table lacks ${method}`,
-    );
+    assert.ok(hostSrc.includes(`"${method}"`), `method table lacks ${method}`);
   }
   // The window chrome mounts onto the prototype like the overlays.
-  assert.match(hostSrc, /Object\.assign\(PlotterExtHost\.prototype, WINDOW_METHODS\)/);
+  assert.match(
+    hostSrc,
+    /Object\.assign\(PlotterExtHost\.prototype, WINDOW_METHODS\)/,
+  );
   // Windows of a vanished extension close in refresh().
   assert.match(hostSrc, /closeWindowsFor\(record\.extId\)/);
 });
