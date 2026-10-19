@@ -86,11 +86,12 @@ export class PlotterExtHost {
    * @param {object} opts.stream - the DrSignalkStream singleton
    * @param {Node} opts.mount - where dialogs are appended (the dr-app
    *   shadow root, so the app's dialog/theme styles apply)
-   * @param {() => object|null} [opts.getMap] - the `<dr-map-view>`
-   *   element once the chart exists (dr-app wires it); null until then
-   *   — the overlay machinery no-ops without a chart. Handlers reach
-   *   the Leaflet map through `.map` and the follow lock through
-   *   `.follow`.
+   * @param {() => object|null} [opts.getMap] - the Leaflet map once
+   *   the chart exists (dr-app wires it to `<dr-map-view>`); null
+   *   until then — the overlay machinery no-ops without a chart
+   * @param {() => boolean} [opts.getFollow] - whether center-on-vessel
+   *   (follow) is engaged: while it is, the view is locked and freeform
+   *   extension moves are refused
    * @param {{depth: string}} [opts.units] - the user's preferred units
    *   (`units.get`)
    * @param {Storage} [opts.storage]
@@ -101,6 +102,7 @@ export class PlotterExtHost {
     this.stream = opts.stream;
     this.mount = opts.mount;
     this.getMap = opts.getMap ?? (() => null);
+    this.getFollow = opts.getFollow ?? (() => false);
     this.units = opts.units ?? { depth: "m" };
     this.storage = opts.storage ?? globalThis.localStorage;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch?.bind(globalThis);
@@ -630,11 +632,11 @@ export class PlotterExtHost {
           throw badParams("map.center requires position [lon, lat]");
         }
         const map = this.getMap?.();
-        if (!map?.map) throw notSupported("map");
+        if (!map) throw notSupported("map");
         // Center-on-vessel owns the view while engaged: the chart is
         // locked on the DR position and freeform view moves (an
         // extension's included) only happen once follow is released.
-        if (map.follow) throw viewLocked("map.center");
+        if (this.getFollow?.()) throw viewLocked("map.center");
         const zoom =
           params.zoom === undefined || params.zoom === null
             ? undefined
@@ -642,7 +644,7 @@ export class PlotterExtHost {
         if (zoom !== undefined && typeof zoom !== "number") {
           throw badParams("map.center zoom must be a number");
         }
-        map.map.setView([pos[1], pos[0]], zoom);
+        map.setView([pos[1], pos[0]], zoom);
         return {};
       },
       "map.fitBounds": async (params) => {
@@ -655,13 +657,13 @@ export class PlotterExtHost {
           throw badParams("map.fitBounds requires bounds [w, s, e, n]");
         }
         const map = this.getMap?.();
-        if (!map?.map) throw notSupported("map");
-        if (map.follow) throw viewLocked("map.fitBounds");
+        if (!map) throw notSupported("map");
+        if (this.getFollow?.()) throw viewLocked("map.fitBounds");
         const [west, south, east, north] = b;
         // Antimeridian form (west > east): unwrap east so Leaflet's
         // bounds span the short way round.
         const unwrappedEast = east < west ? east + 360 : east;
-        map.map.fitBounds([
+        map.fitBounds([
           [south, west],
           [north, unwrappedEast],
         ]);

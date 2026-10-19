@@ -476,7 +476,8 @@ test("makeMethods: map.center / map.fitBounds refused while follow engaged", asy
       close() {},
     },
   });
-  host.getMap = () => ({ follow: true, map: { setView() {}, fitBounds() {} } });
+  host.getMap = () => ({ setView() {}, fitBounds() {} });
+  host.getFollow = () => true;
   await assert.rejects(
     api["map.center"]({ position: [24, 60] }),
     /locked on the vessel/,
@@ -487,12 +488,10 @@ test("makeMethods: map.center / map.fitBounds refused while follow engaged", asy
   );
   // Released follow lets the moves through again.
   host.getMap = () => ({
-    follow: false,
-    map: {
-      setView() {},
-      fitBounds() {},
-    },
+    setView() {},
+    fitBounds() {},
   });
+  host.getFollow = () => false;
   await api["map.center"]({ position: [24, 60] });
   await api["map.fitBounds"]({ bounds: [23, 59, 25, 61] });
 });

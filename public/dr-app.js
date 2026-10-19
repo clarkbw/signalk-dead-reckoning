@@ -924,7 +924,8 @@ class DrApp extends HTMLElement {
       mount: root,
       // The chart, once it exists — map overlays composite onto it and
       // the map capability reads/drives its viewport.
-      getMap: () => this.map ?? null,
+      getMap: () => this.map?.map ?? null,
+      getFollow: () => this.map?.follow ?? false,
     });
     // The host hooks the Leaflet events itself, but discovery can land
     // before the chart exists — forward the element's own view-change
