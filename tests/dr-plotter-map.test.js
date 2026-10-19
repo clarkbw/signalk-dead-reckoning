@@ -11,14 +11,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const mapSrc = readFileSync(
-  fileURLToPath(new URL("../public/dr-map-view.js", import.meta.url)),
-  { encoding: "utf8" },
-);
-const appSrc = readFileSync(
-  fileURLToPath(new URL("../public/dr-app.js", import.meta.url)),
-  { encoding: "utf8" },
-);
+// Normalize CRLF → LF so the structure regexes below are insensitive
+// to Windows checkouts (git autocrlf converts LF to CRLF on disk).
+const read = (f) =>
+  readFileSync(fileURLToPath(new URL(`../public/${f}`, import.meta.url)), {
+    encoding: "utf8",
+  }).replace(/\r\n/g, "\n");
+const mapSrc = read("dr-map-view.js");
+const appSrc = read("dr-app.js");
 
 test("AIS glyph: cased and stroked like the own boat, a notch lighter", () => {
   const icon = mapSrc.slice(

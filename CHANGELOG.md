@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Windows CI: source-structure tests no longer fail on CRLF checkouts.** The map/layout smoketests assert on `public/*.js` source structure with newline-sensitive regexes, which never matched once git's `autocrlf` converted the files to CRLF on a Windows runner. Both test readers now normalize CRLF → LF before matching.
+
 ## [0.14.2] - 2026-10-19
 
 ### Fixed
