@@ -1840,28 +1840,32 @@ class DrMapView extends HTMLElement {
     this.layers.ghost?.clearLayers();
     if (pts.length < 2) return;
     const t = vm.STYLE.track;
-    L.polyline(pts, {
-      color: t.casingColor,
-      weight: t.ghostWeight + t.casingWidth,
-      opacity: 0.85,
-      interactive: false,
-    }).addTo(this.layers.ghost);
-    L.polyline(pts, {
-      color: vm.STYLE.ghostTrack,
-      weight: t.ghostWeight,
-      opacity: 0.95,
-      interactive: false,
-    }).addTo(this.layers.ghost);
     const course = vm.courseText(movement);
-    if (course) {
-      L.marker(pts[pts.length - 2], {
-        icon: L.divIcon({
-          className: "dr-course-label",
-          html: `<span>${course}</span>`,
-        }),
+    // Unwrapped across the antimeridian and drawn per world copy —
+    // the same seam handling as the active route.
+    for (const line of vm.worldCopies(vm.unwrapLineLongitudes(pts))) {
+      L.polyline(line, {
+        color: t.casingColor,
+        weight: t.ghostWeight + t.casingWidth,
+        opacity: 0.85,
         interactive: false,
-        keyboard: false,
       }).addTo(this.layers.ghost);
+      L.polyline(line, {
+        color: vm.STYLE.ghostTrack,
+        weight: t.ghostWeight,
+        opacity: 0.95,
+        interactive: false,
+      }).addTo(this.layers.ghost);
+      if (course) {
+        L.marker(line[line.length - 2], {
+          icon: L.divIcon({
+            className: "dr-course-label",
+            html: `<span>${course}</span>`,
+          }),
+          interactive: false,
+          keyboard: false,
+        }).addTo(this.layers.ghost);
+      }
     }
   }
 
@@ -1873,8 +1877,11 @@ class DrMapView extends HTMLElement {
    */
   replacePolyline(key, pts, opts) {
     this.layers[key]?.clearLayers();
-    if (pts.length >= 2) {
-      L.polyline(pts, opts).addTo(this.layers[key]);
+    if (pts.length < 2) return;
+    // Tracks draw unwrapped across the antimeridian, per world copy
+    // (same seam handling as the ghost track).
+    for (const line of vm.worldCopies(vm.unwrapLineLongitudes(pts))) {
+      L.polyline(line, opts).addTo(this.layers[key]);
     }
   }
 
@@ -2325,7 +2332,10 @@ class DrMapView extends HTMLElement {
    * point currently being navigated to emphasized. Dr-app pushes a
    * `routeRenderSpec`; null (course cleared, or a destination that
    * isn't a route) empties the layer. The whole layer is toggleable
-   * via the layers control ("Active route").
+   * via the layers control ("Active route"). The line draws unwrapped
+   * across the antimeridian (each leg the short way over the ±180°
+   * seam, repeated on the world copies the view can sit over) — a raw
+   * polyline renders a crossing leg as a line around the planet.
    *
    * @param {{name: string, points: Array<[number, number]>,
    *   targetIndex: number, labels?: Array<string>}|null} spec
@@ -2336,33 +2346,35 @@ class DrMapView extends HTMLElement {
     if (!layer) return;
     layer.clearLayers();
     if (!spec || spec.points?.length < 2) return;
-    // Route line over a dark casing — same cartographic trick as the
-    // ghost track so the magenta stays legible over light raster tiles.
-    L.polyline(spec.points, {
-      color: vm.STYLE.track.casingColor,
-      weight: 4.5,
-      opacity: 0.85,
-      interactive: false,
-    }).addTo(layer);
-    L.polyline(spec.points, {
-      color: vm.STYLE.route,
-      weight: 2.5,
-      opacity: 0.95,
-    })
-      .bindTooltip(spec.name, { direction: "top" })
-      .addTo(layer);
-    for (let i = 0; i < spec.points.length; i++) {
-      const target = i === spec.targetIndex;
-      const label = spec.labels?.[i] ?? `WP ${i + 1}`;
-      L.circleMarker(spec.points[i], {
-        radius: target ? 6 : 4,
+    for (const pts of vm.worldCopies(vm.unwrapLineLongitudes(spec.points))) {
+      // Route line over a dark casing — same cartographic trick as the
+      // ghost track so the magenta stays legible over light raster tiles.
+      L.polyline(pts, {
+        color: vm.STYLE.track.casingColor,
+        weight: 4.5,
+        opacity: 0.85,
+        interactive: false,
+      }).addTo(layer);
+      L.polyline(pts, {
         color: vm.STYLE.route,
-        fillColor: target ? vm.STYLE.route : "transparent",
-        fillOpacity: target ? 0.9 : 0,
-        weight: 2,
+        weight: 2.5,
+        opacity: 0.95,
       })
-        .bindTooltip(target ? `${label} — next` : label, { direction: "top" })
+        .bindTooltip(spec.name, { direction: "top" })
         .addTo(layer);
+      for (let i = 0; i < pts.length; i++) {
+        const target = i === spec.targetIndex;
+        const label = spec.labels?.[i] ?? `WP ${i + 1}`;
+        L.circleMarker(pts[i], {
+          radius: target ? 6 : 4,
+          color: vm.STYLE.route,
+          fillColor: target ? vm.STYLE.route : "transparent",
+          fillOpacity: target ? 0.9 : 0,
+          weight: 2,
+        })
+          .bindTooltip(target ? `${label} — next` : label, { direction: "top" })
+          .addTo(layer);
+      }
     }
   }
 

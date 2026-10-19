@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Routes and tracks crossing the antimeridian no longer draw a line around the planet.** An active-route leg straddling ±180° longitude (Fiji↔Samoa, Tonga's eastern islands, the Bering Strait) rendered as a horizontal stroke spanning the whole chart width — Leaflet joins two raw longitudes straight through the primary world frame instead of hopping the seam. Route lines draw unwrapped (`vm.unwrapLineLongitudes`: every point shifted ±360° onto the previous point's longitude strip) and repeat on the ±360° world copies the view can sit over (`vm.worldCopies`), so the leg renders as the short hop over the dateline with waypoint markers and the "next" emphasis intact; the ghost (DR) and GPS tracks get the same treatment, as a boat logging fixes across the seam produced the identical artifact in its track.
+
 ## [0.14.1] - 2026-10-19
 
 ### Added

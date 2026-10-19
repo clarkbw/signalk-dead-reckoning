@@ -11,6 +11,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const vmPromise = import("../public/dr-viewmodel.js");
 
@@ -210,4 +212,111 @@ test("routeWaypointLabels uses coordinatesMeta names, 1-based WP fallback", asyn
   ]);
   assert.deepEqual(vm.routeWaypointLabels(null, 2), ["WP 1", "WP 2"]);
   assert.deepEqual(vm.routeWaypointLabels({}, 1), ["WP 1"]);
+});
+
+test("unwrapLineLongitudes leaves an in-frame line untouched", async () => {
+  const vm = await loadVm();
+  const line = [
+    [60.1, 24.9],
+    [60.2, 24.8],
+    [60.3, 24.7],
+  ];
+  assert.deepEqual(vm.unwrapLineLongitudes(line), line);
+});
+
+test("unwrapLineLongitudes carries an antimeridian leg the short way", async () => {
+  const vm = await loadVm();
+  // Fiji → Samoa eastward across the seam: -179.9 must come out as
+  // 180.1 so the leg hops the dateline instead of wrapping the planet.
+  const crossing = [
+    [-17.8, 179.9],
+    [-17.7, -179.9],
+  ];
+  assert.deepEqual(vm.unwrapLineLongitudes(crossing), [
+    [-17.8, 179.9],
+    [-17.7, 180.1],
+  ]);
+  // …and westward the mirror image: 179.9 comes out as -180.1.
+  assert.deepEqual(vm.unwrapLineLongitudes([...crossing].reverse()), [
+    [-17.7, -179.9],
+    [-17.8, -180.1],
+  ]);
+});
+
+test("unwrapLineLongitudes keeps a multi-leg route continuous", async () => {
+  const vm = await loadVm();
+  // Steps of 1° east from 179°: the whole tail beyond the seam stays
+  // on one continuous strip (…, 180, 181, 182, 183), every leg 1°
+  // wide, no wrap-around jumps.
+  const pts = [
+    [0, 179],
+    [0, -180],
+    [0, -179],
+    [0, -178],
+    [0, -177],
+  ];
+  const unwrapped = vm.unwrapLineLongitudes(pts);
+  for (let i = 1; i < unwrapped.length; i++) {
+    const d = unwrapped[i][1] - unwrapped[i - 1][1];
+    assert.ok(Math.abs(d - 1) < 1e-9, `leg ${i} spans ${d}°, expected 1°`);
+  }
+  assert.equal(unwrapped[unwrapped.length - 1][1], 183);
+});
+
+test("worldCopies adds only the neighbours a seam-crossing line needs", async () => {
+  const vm = await loadVm();
+  // In-frame line: a single copy, the line itself.
+  const plain = [
+    [60, 24],
+    [61, 25],
+  ];
+  assert.deepEqual(vm.worldCopies(plain), [plain]);
+  // Eastward across +180: the -360° sibling covers the west-side view.
+  const overEast = [
+    [-17.8, 179.9],
+    [-17.7, 180.1],
+  ];
+  assert.deepEqual(vm.worldCopies(overEast), [
+    overEast,
+    [
+      [-17.8, -180.1],
+      [-17.7, -179.9],
+    ],
+  ]);
+  // Westward across -180: the +360° sibling covers the east-side view.
+  const overWest = [
+    [-17.7, -179.9],
+    [-17.8, -180.1],
+  ];
+  assert.deepEqual(vm.worldCopies(overWest), [
+    overWest,
+    [
+      [-17.7, 180.1],
+      [-17.8, 179.9],
+    ],
+  ]);
+});
+
+test("dr-map-view draws the route and tracks through the seam helpers", () => {
+  // Source smoketest (no DOM in the test env): the Leaflet adapter
+  // must run every seam-spanning line — active route, ghost track,
+  // GPS track — through unwrapLineLongitudes + worldCopies, or an
+  // antimeridian leg renders as a line around the planet again.
+  const mapSrc = readFileSync(join(__dirname, "../public/dr-map-view.js"), {
+    encoding: "utf8",
+  });
+  for (const name of [
+    "renderRoute(spec) {",
+    "renderGhostTrack(pts, movement = null) {",
+    "replacePolyline(key, pts, opts) {",
+  ]) {
+    const at = mapSrc.indexOf(name);
+    assert.ok(at > -1, `${name} exists`);
+    const body = mapSrc.slice(at, at + 2000);
+    assert.match(
+      body,
+      /vm\.worldCopies\(vm\.unwrapLineLongitudes\(/,
+      `${name} must unwrap longitudes and draw world copies`,
+    );
+  }
 });

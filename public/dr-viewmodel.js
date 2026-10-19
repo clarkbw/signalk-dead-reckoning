@@ -2402,6 +2402,56 @@ export function aisTargetsForRender(store, nowMs, own, opts = {}) {
 }
 
 /**
+ * Unwraps a polyline's longitudes to a continuous strip: every point
+ * after the first is shifted by ±360° so no leg spans more than 180°
+ * of longitude. On the chart this makes an antimeridian-crossing leg
+ * draw as the short hop over the ±180° seam — Leaflet projects
+ * unwrapped longitudes onto the neighbouring world copies — instead
+ * of a straight line around the planet. Takes [lat, lng] points as
+ * the map's render specs carry them; the input list is untouched.
+ *
+ * @param {Array<[number, number]>} pts
+ * @returns {Array<[number, number]>} unwrapped copy
+ */
+export function unwrapLineLongitudes(pts) {
+  const out = [];
+  for (const pt of pts) {
+    let lng = pt[1];
+    if (out.length > 0) {
+      const prev = out[out.length - 1][1];
+      while (lng - prev > 180) lng -= 360;
+      while (lng - prev < -180) lng += 360;
+    }
+    out.push([pt[0], lng]);
+  }
+  return out;
+}
+
+/**
+ * The world copies of an unwrapped line the chart must draw for the
+ * geometry to show from any view frame: the line itself, plus a
+ * ±360°-shifted sibling whenever it crosses out of the primary
+ * [-180, 180] frame — the rest of the chartwork (vessel, fixes,
+ * waypoints) plots raw longitudes, so either side of the seam is a
+ * legitimate frame to look at the line from.
+ *
+ * @param {Array<[number, number]>} pts - unwrapped [lat, lng] points
+ * @returns {Array<Array<[number, number]>>} one point list per copy
+ */
+export function worldCopies(pts) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const pt of pts) {
+    if (pt[1] < min) min = pt[1];
+    if (pt[1] > max) max = pt[1];
+  }
+  const copies = [pts];
+  if (max > 180) copies.push(pts.map(([lat, lng]) => [lat, lng - 360]));
+  if (min < -180) copies.push(pts.map(([lat, lng]) => [lat, lng + 360]));
+  return copies;
+}
+
+/**
  * Extracts the resource id from a Signal K resource href —
  * `/resources/routes/{id}` → `{id}`, `/resources/waypoints/{id}` →
  * `{id}`. Freeboard-SK parses the same trailing segment off
