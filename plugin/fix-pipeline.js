@@ -274,11 +274,22 @@ function advanceToLatest(observations, advance) {
  *        origin was set (integration time)
  * @returns {number} cap in nm
  */
-function fixSanityCapNm(maxDisplacementNm, underwaySinceOriginS) {
+function fixSanityCapNm(
+  maxDisplacementNm,
+  underwaySinceOriginS,
+  originAgeMs = 0,
+) {
   const hours = Number.isFinite(underwaySinceOriginS)
     ? Math.max(0, underwaySinceOriginS) / 3600
     : 0;
-  return Math.max(maxDisplacementNm, 1.5 * hours);
+  // Age term (work doc #38 review): the cap must grow with the
+  // origin's *age*, not just under-way hours — an origin weeks old
+  // (a test server, a season's layup, a plugin down for passage) has
+  // no authority over where the boat is now, and must not veto the
+  // fix that re-establishes truth. Linear in days: a month old
+  // relaxes the cap to 30× the base.
+  const ageDays = Math.max(0, originAgeMs) / 86400000;
+  return Math.max(maxDisplacementNm, 1.5 * hours, maxDisplacementNm * ageDays);
 }
 
 function resolveCandidateFix(input) {

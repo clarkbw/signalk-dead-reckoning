@@ -905,6 +905,25 @@ test("fixSanityCapNm: flat cap when fresh, grows with under-way time", () => {
   assert.strictEqual(fixSanityCapNm(100, Number.NaN), 100);
 });
 
+test("fixSanityCapNm: the origin's age relaxes the cap (work doc #38 review)", () => {
+  const { fixSanityCapNm } = require("../plugin/fix-pipeline.js");
+  const day = 86400000;
+  // A month-old origin (a test server, a layup) has no authority over
+  // where the boat is now — the cap relaxes past a 806 NM relocation.
+  assert.ok(fixSanityCapNm(100, 0, 30 * day) > 806);
+  // Fresh origin: the age term changes nothing (teleports still fail).
+  assert.strictEqual(fixSanityCapNm(100, 0, 0), 100);
+  assert.strictEqual(fixSanityCapNm(100, 0, 3600e3), 100);
+  // The strongest term wins — underway hours still grow the cap when
+  // the boat has been sailing since the fix.
+  assert.strictEqual(
+    fixSanityCapNm(100, 72 * 3600, 30 * day),
+    Math.max(100, 1.5 * 72, 100 * 30),
+  );
+  // Degenerate age never shrinks the cap.
+  assert.strictEqual(fixSanityCapNm(100, 0, -day), 100);
+});
+
 test("radarRangeUncertaintyNm: percentage of range with an absolute floor", () => {
   const { radarRangeUncertaintyNm } = require("../plugin/fix-pipeline.js");
   // 4 nm at the default 1.5% → 0.06 nm (percentage term dominates).

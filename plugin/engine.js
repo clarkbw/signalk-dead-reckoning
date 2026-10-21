@@ -59,6 +59,11 @@ class DeadReckoningEngine {
   constructor(opts = {}) {
     /** @type {{latitude: number, longitude: number}|null} */
     this.origin = opts.origin ?? null;
+    /** @type {number|null} ms epoch of when the origin was set — the
+     * sanity cap's age term (a months-old origin must not veto a real
+     * fix with fresh sightwork). Null when the origin's age is unknown;
+     * persisted and restored across restarts. */
+    this.originSetMs = opts.originSetMs ?? null;
     /** @type {number} */
     this.logNm = opts.logNm ?? 0;
     /** @type {number} */
@@ -96,6 +101,7 @@ class DeadReckoningEngine {
    */
   snapToFix(fix, originErrorNm = 0) {
     this.origin = { latitude: fix.latitude, longitude: fix.longitude };
+    this.originSetMs = Date.now();
     this.elapsedSinceOriginS = 0;
     this.underwaySinceOriginS = 0;
     this.logNmSinceOrigin = 0;
