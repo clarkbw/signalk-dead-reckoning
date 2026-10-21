@@ -37,6 +37,11 @@ template.innerHTML = /* html */ `
     ${COORD_FIELD_CSS}
     :host { display: block; padding: 1rem; --theme-color: var(--color-teal); }
     h2 { justify-content: space-between; }
+    /* Embedded mode ('embedded' attribute): the hosting window/panel
+       supplies the title and the close control (Freeboard window
+       decorations, work doc #38) — the component's own heading row
+       would duplicate both. */
+    :host([embedded]) h2 { display: none; }
     .gnss {
       margin: 0 0 0.75rem 0;
       padding: 0.6rem;

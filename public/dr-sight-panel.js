@@ -38,6 +38,11 @@ template.innerHTML = /* html */ `
     ${COORD_FIELD_CSS}
     :host { display: block; padding: 1rem; }
     h2 { justify-content: space-between; }
+    /* Embedded mode ('embedded' attribute): the hosting window/panel
+       supplies the title and the close control (Freeboard window
+       decorations, work doc #38) — the component's own heading row
+       would duplicate both. */
+    :host([embedded]) h2 { display: none; }
     /* Bracketed mode toggle — active tab inverts. Wraps to a second
        row on narrow viewports rather than overflowing: five methods
        at theme button sizing don't fit a phone panel, and "CELESTIAL"
@@ -48,6 +53,10 @@ template.innerHTML = /* html */ `
       gap: 0.5rem;
       margin-bottom: 0.75rem;
     }
+    /* Single-method mode (single-tab attribute): the strip is removed,
+       not merely visually hidden — display:flex would beat the UA's
+       [hidden] rule, same as the forms below. */
+    .tabs[hidden] { display: none; }
     .tabs button {
       flex: 1 1 auto;
       min-width: max-content;
@@ -61,6 +70,21 @@ template.innerHTML = /* html */ `
     }
     .form { display: grid; gap: 0.75rem; }
     .form[hidden] { display: none; }
+    /* Chart pick affordance (pick attribute): a small ⊙ button beside
+       each coordinate fieldset's legend, for embedders that can offer
+       a chart pick (the plotter-extension panel, work doc #38). */
+    fieldset.coord legend {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .pick-btn {
+      min-height: 2rem;
+      min-width: 0;
+      padding: 0 0.5rem;
+      font-size: 0.7rem;
+    }
     label {
       display: flex;
       flex-direction: column;
@@ -493,6 +517,15 @@ template.innerHTML = /* html */ `
 `;
 
 class DrSightPanel extends HTMLElement {
+  /** `single-tab="<method>"` — pins the panel to one sight method: the
+   *  tab strip is removed and only that method's form renders. Used by
+   *  embedders that open the panel focused on one entry flow (the
+   *  plotter-extension action windows, work doc #38); removing the
+   *  attribute restores the full tabbed panel. */
+  static get observedAttributes() {
+    return ["single-tab"];
+  }
+
   constructor() {
     super();
     // Default to DMS (matches the plugin default); updated when the
@@ -685,6 +718,34 @@ class DrSightPanel extends HTMLElement {
     for (const fs of this.shadowRoot.querySelectorAll("fieldset.coord")) {
       buildCoordFieldset(fs);
     }
+
+    // Chart-pick affordance: with the `pick` attribute, each coordinate
+    // fieldset's legend gains a ⊙ button that asks the embedding host
+    // for a chart pick (dr-pick-request → the embedder's map.pick); the
+    // picked position lands back in THIS fieldset.
+    if (this.hasAttribute("pick")) {
+      for (const fs of this.shadowRoot.querySelectorAll("fieldset.coord")) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "pick-btn";
+        btn.textContent = "⊙ Pick";
+        btn.title = "Pick this position on the chart";
+        btn.addEventListener("click", () => {
+          const form = fs.closest("form");
+          this.dispatchEvent(
+            new CustomEvent("dr-pick-request", {
+              bubbles: true,
+              composed: true,
+              detail: {
+                mode: form?.id?.replace("form-", "") ?? this.activeTab,
+                prefix: fs.dataset.prefix ?? null,
+              },
+            }),
+          );
+        });
+        fs.querySelector("legend").appendChild(btn);
+      }
+    }
   }
 
   /**
@@ -737,6 +798,31 @@ class DrSightPanel extends HTMLElement {
       }
     } catch {
       /* panel still works without the body list */
+    }
+  }
+
+  /**
+   * Reacts to `single-tab` changes: hides the tab strip and shows only
+   * the named method's form (an unknown name keeps the current tab);
+   * removing the attribute brings the strip back.
+   *
+   * @param {string} name
+   * @param {string|null} oldValue
+   * @param {string|null} newValue
+   * @returns {void}
+   */
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (name !== "single-tab" || oldValue === newValue) return;
+    const strip = this.shadowRoot?.querySelector(".tabs");
+    if (!strip) return;
+    if (newValue != null) {
+      strip.hidden = true;
+      const known = [...strip.querySelectorAll("button")].some(
+        (b) => b.dataset.tab === newValue,
+      );
+      if (known) this.switchTab(newValue);
+    } else {
+      strip.hidden = false;
     }
   }
 
@@ -964,16 +1050,19 @@ class DrSightPanel extends HTMLElement {
    * @param {"bearing"|"vertical"|"radar"|"hangle"} mode
    * @param {string} [label] - charted name / AIS target name, if any
    * @param {number} [tMs] - pick instant the position is valid for
+   * @param {string|null} [prefix] - fieldset to fill, overriding the
+   *   first-empty-slot logic (the per-fieldset ⊙ Pick buttons name
+   *   their own fieldset)
    * @returns {void}
    */
-  seedObjectPosition(lat, lon, mode, label, tMs = null) {
-    const prefix =
+  seedObjectPosition(lat, lon, mode, label, tMs = null, prefix = null) {
+    const defaultPrefix =
       mode === "bearing" ? "object" : mode === "hangle" ? null : "center";
     const tab = mode === "bearing" ? "bearing" : mode;
     this.switchTab(tab);
     const form = this.shadowRoot.querySelector(`#form-${tab}`);
-    let target = prefix;
-    if (mode === "hangle") {
+    let target = prefix ?? defaultPrefix;
+    if (mode === "hangle" && prefix == null) {
       // First empty object slot wins; all filled → overwrite A.
       target = null;
       for (const p of ["objA", "objB", "objC"]) {
