@@ -21,6 +21,10 @@ const {
   recordTrackSamples,
   pruneTrackSamplesBefore,
   loadTrackSamplesSince,
+  openStationarySpan,
+  closeStationarySpan,
+  loadStationarySpans,
+  pruneStationarySpansBefore,
   SCHEMA_VERSION,
 } = require("../plugin/db.js");
 
@@ -778,6 +782,44 @@ test("track samples: record, incremental re-record (replace), prune, load", asyn
     loaded.map((s) => s.timestamp),
     [t0 + 1000, t0 + 2000],
   );
+
+  db.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("stationary spans: open, close, load, prune (fixes while stationary)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dr-db-spans-"));
+  const db = openDatabase(join(dir, "t.sqlite"));
+
+  const t0 = 1_000_000;
+  // Open a span, then a second one (the first closed): the load lists
+  // both oldest-first, the open one with ended_ms null.
+  openStationarySpan(db, t0);
+  openStationarySpan(db, t0); // idempotent re-open (same tick)
+  closeStationarySpan(db, t0, t0 + 3600_000);
+  openStationarySpan(db, t0 + 7200_000);
+
+  let loaded = loadStationarySpans(db, 0);
+  assert.strictEqual(loaded.length, 2);
+  assert.deepStrictEqual(loaded[0], {
+    started_ms: t0,
+    ended_ms: t0 + 3600_000,
+  });
+  assert.deepStrictEqual(loaded[1], {
+    started_ms: t0 + 7200_000,
+    ended_ms: null,
+  });
+
+  // A stale close (wrong span, already closed) must not touch anything.
+  closeStationarySpan(db, t0, t0 + 9999);
+  loaded = loadStationarySpans(db, 0);
+  assert.strictEqual(loaded[0].ended_ms, t0 + 3600_000);
+
+  // Prune only CLOSED spans older than the cutoff; the open one stays.
+  pruneStationarySpansBefore(db, t0 + 4000_000);
+  loaded = loadStationarySpans(db, 0);
+  assert.strictEqual(loaded.length, 1);
+  assert.strictEqual(loaded[0].started_ms, t0 + 7200_000);
 
   db.close();
   await rm(dir, { recursive: true, force: true });

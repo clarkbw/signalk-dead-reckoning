@@ -185,6 +185,19 @@ const SCHEMA_DDL = [
     latitude REAL NOT NULL,
     longitude REAL NOT NULL
   )`,
+
+  // Fixes while stationary (work doc #38 review): while the engine
+  // freezes displacement (anchored/moored), a running-fix advance
+  // needs no track at all — zero displacement is correct by
+  // construction (the anchor holds the ground position and the DR
+  // engine deliberately freezes with it). Persisting the stationary
+  // spans keeps that true across restarts and track gaps — the
+  // first-try scenario is exactly an anchored boat. An open span
+  // (ended_ms NULL) is the current one.
+  `CREATE TABLE IF NOT EXISTS dr_stationary_spans (
+    started_ms INTEGER PRIMARY KEY,
+    ended_ms INTEGER
+  )`,
 ];
 
 /**
@@ -1155,6 +1168,74 @@ function loadTrackSamplesSince(db, sinceMs) {
     }));
 }
 
+/**
+ * Opens a stationary span (the engine froze displacement — anchored or
+ * moored). Idempotent on the start timestamp; a span open since the
+ * same instant is left alone.
+ *
+ * @param {import("node:sqlite").DatabaseSync|null} db
+ * @param {number} startedMs
+ * @returns {void}
+ */
+function openStationarySpan(db, startedMs) {
+  if (!db) return;
+  db.prepare(
+    "INSERT OR IGNORE INTO dr_stationary_spans (started_ms, ended_ms) VALUES (?, NULL)",
+  ).run(startedMs);
+}
+
+/**
+ * Closes the open stationary span at `endedMs` — the engine resumed
+ * displacement (underway again).
+ *
+ * @param {import("node:sqlite").DatabaseSync|null} db
+ * @param {number} startedMs
+ * @param {number} endedMs
+ * @returns {void}
+ */
+function closeStationarySpan(db, startedMs, endedMs) {
+  if (!db) return;
+  db.prepare(
+    "UPDATE dr_stationary_spans SET ended_ms = ? WHERE started_ms = ? AND ended_ms IS NULL",
+  ).run(endedMs, startedMs);
+}
+
+/**
+ * Loads stationary spans overlapping `sinceMs`, oldest first. Open
+ * spans (ended_ms NULL) are the engine's current one.
+ *
+ * @param {import("node:sqlite").DatabaseSync|null} db
+ * @param {number} sinceMs
+ * @returns {{started_ms: number, ended_ms: number|null}[]}
+ */
+function loadStationarySpans(db, sinceMs) {
+  if (!db) return [];
+  return db
+    .prepare(
+      "SELECT started_ms, ended_ms FROM dr_stationary_spans WHERE COALESCE(ended_ms, started_ms) >= ? ORDER BY started_ms",
+    )
+    .all(sinceMs)
+    .map((r) => ({
+      started_ms: Number(r.started_ms),
+      ended_ms: r.ended_ms == null ? null : Number(r.ended_ms),
+    }));
+}
+
+/**
+ * Prunes *closed* stationary spans older than the cutoff. Open spans
+ * are never pruned — they are the engine's present state.
+ *
+ * @param {import("node:sqlite").DatabaseSync|null} db
+ * @param {number} cutoffMs
+ * @returns {void}
+ */
+function pruneStationarySpansBefore(db, cutoffMs) {
+  if (!db) return;
+  db.prepare(
+    "DELETE FROM dr_stationary_spans WHERE ended_ms IS NOT NULL AND ended_ms < ?",
+  ).run(cutoffMs);
+}
+
 module.exports = {
   SCHEMA_VERSION,
   SCHEMA_DDL,
@@ -1172,6 +1253,10 @@ module.exports = {
   recordTrackSamples,
   pruneTrackSamplesBefore,
   loadTrackSamplesSince,
+  openStationarySpan,
+  closeStationarySpan,
+  loadStationarySpans,
+  pruneStationarySpansBefore,
   listLogbookPending,
   dequeueLogbookPending,
   listFixes,
