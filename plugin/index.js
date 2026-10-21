@@ -42,6 +42,10 @@ const {
   recordTrackSamples,
   pruneTrackSamplesBefore,
   loadTrackSamplesSince,
+  openStationarySpan,
+  closeStationarySpan,
+  loadStationarySpans,
+  pruneStationarySpansBefore,
 } = require("./db.js");
 const { MatrixStore } = require("./matrix.js");
 const { DeadReckoningEngine } = require("./engine.js");
@@ -442,6 +446,10 @@ const deps = {
   recordTrackSamples,
   pruneTrackSamplesBefore,
   loadTrackSamplesSince,
+  openStationarySpan,
+  closeStationarySpan,
+  loadStationarySpans,
+  pruneStationarySpansBefore,
   listFixes,
   listLinesOfPosition,
   listCircularPositionLines,
@@ -509,6 +517,16 @@ module.exports = (app) => {
    * @type {number}
    */
   let trackFlushedTs = 0;
+
+  /** Stationary spans (fixes while stationary, work doc #38 review):
+   * while the engine freezes displacement (anchored/moored), a
+   * running-fix advance needs no track — zero displacement is correct
+   * by construction. Spans persist so the stationary case survives
+   * restarts and track gaps; `stationarySince` is the open span's
+   * start (null when moving). @type {number|null} */
+  let stationarySince = null;
+  /** @type {{started_ms: number, ended_ms: number|null}[]} */
+  let stationarySpans = [];
 
   /** @type {WeatherCurrentClient|null} §6.2 tier-3 weather current poller */
   let weatherClient = null;
@@ -984,6 +1002,16 @@ module.exports = (app) => {
           ? groundTrack.samples[groundTrack.samples.length - 1].timestamp
           : seedTs;
 
+      // Stationary spans (fixes while stationary): restore the recent
+      // spans; an open one stays open — the engine froze displacement
+      // before the restart and (until it says otherwise) still holds.
+      stationarySpans = deps.loadStationarySpans(
+        db,
+        Date.now() - 8 * 24 * 3600 * 1000,
+      );
+      stationarySince =
+        stationarySpans.find((s) => s.ended_ms == null)?.started_ms ?? null;
+
       // §6.2 tier 3: poll the Signal K Weather API for the point-forecast
       // current at the vessel position (a current-capable provider such as
       // signalk-weather-router-plus). Off the 1 Hz hot path: slow interval,
@@ -1045,6 +1073,25 @@ module.exports = (app) => {
           const fix = JSON.parse(lastFix);
           if (fix && fix.latitude != null && fix.longitude != null) {
             engine.snapToFix(fix);
+            // The origin's set-time survives restarts too: the sanity
+            // cap's age term must see the REAL age (a months-old
+            // origin relaxes), not a fresh stamp from this restart.
+            // Falls back to the newest confirmed fix's timestamp when
+            // the key predates this feature.
+            const persistedSetMs = Number(
+              deps.getState(db, "dr_origin_set_ms"),
+            );
+            const latestFix = deps.listFixes(db, { limit: 1 })[0];
+            const fallbackMs = latestFix
+              ? Date.parse(latestFix.timestamp)
+              : NaN;
+            const setMs =
+              Number.isFinite(persistedSetMs) && persistedSetMs > 0
+                ? persistedSetMs
+                : Number.isFinite(fallbackMs)
+                  ? fallbackMs
+                  : null;
+            if (setMs != null) engine.originSetMs = setMs;
           }
         } catch {
           // Corrupt persisted state — start from scratch, the next GPS fix
@@ -1541,6 +1588,23 @@ module.exports = (app) => {
       config.tickIntervalMs / 1000,
       config.tripBoundary,
     );
+
+    // Stationary spans (fixes while stationary, work doc #38 review):
+    // record the anchored/moored stretches — while the engine freezes
+    // displacement, a running-fix advance is zero by construction and
+    // needs no track, so fixes taken at anchor resolve (and survive
+    // restarts) without any DR history. Transitions persist at once:
+    // a hard kill must not lose a span edge.
+    if (underway === false && stationarySince == null) {
+      stationarySince = Date.now();
+      deps.openStationarySpan(db, stationarySince);
+      stationarySpans.push({ started_ms: stationarySince, ended_ms: null });
+    } else if (underway === true && stationarySince != null) {
+      deps.closeStationarySpan(db, stationarySince, Date.now());
+      const open = stationarySpans.find((s) => s.ended_ms == null);
+      if (open) open.ended_ms = Date.now();
+      stationarySince = null;
+    }
     if (tripEdge.transition === "raise") {
       if (engine.tripLogNm > 0) {
         engine.resetTrip();
@@ -2593,9 +2657,13 @@ module.exports = (app) => {
       if (fresh.length > 0) {
         trackFlushedTs = fresh[fresh.length - 1].timestamp;
       }
+      // Closed stationary spans older than the retention window go too;
+      // an open span is the engine's present state and never prunes.
+      deps.pruneStationarySpansBefore(db, Date.now() - 8 * 24 * 3600 * 1000);
     }
     if (engine.origin) {
       deps.setState(db, "last_known_good_fix", JSON.stringify(engine.origin));
+      deps.setState(db, "dr_origin_set_ms", String(engine.originSetMs ?? ""));
     }
     deps.setState(db, "dr_log_nm", String(engine.logNm));
     deps.setState(db, "dr_trip_log_nm", String(engine.tripLogNm));
@@ -2624,6 +2692,55 @@ module.exports = (app) => {
   }
 
   // --- REST API ----------------------------------------------------------
+
+  /**
+   * The ground-track displacement provider shared by the resolve and
+   * confirm paths — the track first, then stationary-span coverage
+   * (fixes while stationary, work doc #38 review): while the engine
+   * freezes displacement (anchored/moored), zero displacement is
+   * correct by construction — the anchor holds the ground position
+   * and the engine deliberately freezes with it. An interval fully
+   * inside a stationary span resolves without any track, so fixes
+   * taken at anchor survive restarts and track gaps. Both paths MUST
+   * use the same provider: a preview that resolved via a span must
+   * not confirm differently.
+   *
+   * @param {number} t0
+   * @param {number} t1
+   * @returns {{bearingTrue: number, distanceNm: number}|null}
+   */
+  function advanceDisplacement(t0, t1) {
+    const disp = groundTrack?.displacementBetween(t0, t1) ?? null;
+    if (disp) return disp;
+    const from = Math.min(t0, t1);
+    const to = Math.max(t0, t1);
+    for (const span of stationarySpans) {
+      if (from >= span.started_ms && to <= (span.ended_ms ?? Date.now())) {
+        return { bearingTrue: 0, distanceNm: 0 };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Guiding failure text for an unresolvable observation set — the
+   * watchkeeper needs the next step, not a verdict (work doc #38
+   * review).
+   *
+   * @param {number[]} lopIds
+   * @param {number[]} cplIds
+   * @param {object[]|undefined} observations
+   * @returns {string}
+   */
+  function unresolvableMessage(lopIds, cplIds, observations) {
+    const total =
+      lopIds.length +
+      cplIds.length +
+      (Array.isArray(observations) ? observations.length : 0);
+    return total === 1
+      ? "one sight alone can't make a fix — it resolves as a running fix against the last confirmed fix (the DR track must cover the time between), or pair it with a second sight."
+      : "these sights don't cross — parallel lines, or a circle that misses them. Check the sight details, or add another sight.";
+  }
 
   /**
    * Parses the optional `since` query parameter (ISO-8601 string or
@@ -3219,14 +3336,16 @@ module.exports = (app) => {
             getLineOfPosition: deps.getLineOfPosition,
             getCircularPositionLine: deps.getCircularPositionLine,
           },
-          advance: (t0, t1) => groundTrack?.displacementBetween(t0, t1) ?? null,
+          advance: advanceDisplacement,
         });
       } catch (err) {
         res.status(400).json({ message: err.message });
         return;
       }
       if (!candidate) {
-        res.status(400).json({ message: "observations not resolvable" });
+        res.status(400).json({
+          message: unresolvableMessage(lopIds, cplIds, b.observations),
+        });
         return;
       }
       // Preview context (sea trial 2026-08-31): surface how far the
@@ -3238,11 +3357,24 @@ module.exports = (app) => {
       const resolveCapNm = deps.fixSanityCapNm(
         config.fixes.maxDisplacementNm,
         engine.underwaySinceOriginS,
+        engine.originSetMs != null ? Date.now() - engine.originSetMs : 0,
       );
       res.json({
         candidate,
         displacement_nm: displacementNm,
         gross: displacementNm != null && displacementNm > resolveCapNm,
+        // Advancement diagnostics (work doc #38 review): when an
+        // observation could not be advanced, the honest message needs
+        // the WHY — where the DR track actually reaches, and whether
+        // the engine has been holding position (stationary spans
+        // cover their intervals regardless of the track).
+        track_coverage: {
+          oldest_ms: groundTrack?.samples[0]?.timestamp ?? null,
+          newest_ms:
+            groundTrack?.samples[groundTrack.samples.length - 1]?.timestamp ??
+            null,
+          stationary_since: stationarySince,
+        },
       });
     });
 
@@ -3304,6 +3436,8 @@ module.exports = (app) => {
       // Build the candidate: either a passed-back pre-resolved candidate,
       // a point fix, or a fresh LOP/CPL resolution.
       let candidate;
+      let lopIds = [];
+      let cplIds = [];
       try {
         if (b.candidate?.source_type) {
           candidate = b.candidate;
@@ -3324,12 +3458,11 @@ module.exports = (app) => {
               getLineOfPosition: deps.getLineOfPosition,
               getCircularPositionLine: deps.getCircularPositionLine,
             },
-            advance: (t0, t1) =>
-              groundTrack?.displacementBetween(t0, t1) ?? null,
+            advance: advanceDisplacement,
           });
         } else {
-          const lopIds = Array.isArray(b.lop_ids) ? b.lop_ids : [];
-          const cplIds = Array.isArray(b.cpl_ids) ? b.cpl_ids : [];
+          lopIds = Array.isArray(b.lop_ids) ? b.lop_ids : [];
+          cplIds = Array.isArray(b.cpl_ids) ? b.cpl_ids : [];
           const runningFixEligible =
             !(Array.isArray(b.observations) && b.observations.length > 0) &&
             lopIds.length + cplIds.length === 1;
@@ -3347,8 +3480,7 @@ module.exports = (app) => {
               getLineOfPosition: deps.getLineOfPosition,
               getCircularPositionLine: deps.getCircularPositionLine,
             },
-            advance: (t0, t1) =>
-              groundTrack?.displacementBetween(t0, t1) ?? null,
+            advance: advanceDisplacement,
           });
         }
       } catch (err) {
@@ -3356,7 +3488,9 @@ module.exports = (app) => {
         return;
       }
       if (!candidate) {
-        res.status(400).json({ message: "observations not resolvable" });
+        res.status(400).json({
+          message: unresolvableMessage(lopIds, cplIds, b.observations),
+        });
         return;
       }
 
@@ -3371,6 +3505,7 @@ module.exports = (app) => {
       const fixCapNm = deps.fixSanityCapNm(
         config.fixes.maxDisplacementNm,
         engine.underwaySinceOriginS,
+        engine.originSetMs != null ? Date.now() - engine.originSetMs : 0,
       );
       if (resets && engine.origin) {
         const displacementNm = deps.distanceNm(engine.origin, candidate);

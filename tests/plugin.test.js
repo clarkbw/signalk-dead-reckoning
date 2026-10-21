@@ -680,7 +680,9 @@ test("POST /fix/resolve returns 400 for an unresolvable single LOP", async () =>
     ],
   });
   assert.strictEqual(status, 400);
-  assert.ok(/not resolvable/.test(body.message));
+  // Guiding, not a verdict: one sight alone needs a partner or a
+  // previous fix to run forward from.
+  assert.ok(/one sight alone can't make a fix/.test(body.message));
   plugin.stop();
   await rm(dir, { recursive: true, force: true });
 });
