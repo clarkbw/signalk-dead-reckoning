@@ -130,7 +130,7 @@ test("teardown empties the listing so hosts unload the extension", async () => {
  * @returns {Promise<{status: number, body: Buffer|null, type: string,
  *   fellThrough: boolean}>}
  */
-function serve(handler, urlPath) {
+function serve(handler, urlPath, reqHeaders = {}) {
   return new Promise((resolve) => {
     const res = {
       statusCode: 200,
@@ -145,11 +145,12 @@ function serve(handler, urlPath) {
           status: this.statusCode,
           body: this.body,
           type: this.headers["Content-Type"] ?? "",
+          headers: this.headers,
           fellThrough: false,
         });
       },
     };
-    handler({ path: urlPath, url: urlPath }, res, () =>
+    handler({ path: urlPath, url: urlPath, headers: reqHeaders }, res, () =>
       resolve({ status: 0, body: null, type: "", fellThrough: true }),
     );
   });
@@ -185,4 +186,40 @@ test("asset handler falls through for missing files and traversal", async () => 
   // prefix root (no directory index).
   const index = await serve(handler, `${ASSET_BASE}/`);
   assert.equal(index.fellThrough, true);
+});
+
+test("asset handler never serves stale code — no-cache with validators", async () => {
+  const handler = staticAssetHandler(PUBLIC_DIR, ASSET_BASE);
+
+  // Code assets revalidate on every load: a fresh manifest (served via
+  // the resources API, never cached) must never wrap hour-old iframe
+  // code.
+  const page = await serve(handler, `${ASSET_BASE}/dr-ext-widget.html`);
+  assert.equal(page.headers["Cache-Control"], "no-cache");
+  assert.ok(page.headers.ETag, "etag present");
+  assert.ok(page.headers["Last-Modified"], "last-modified present");
+  const script = await serve(handler, `${ASSET_BASE}/dr-ext-widget.js`);
+  assert.equal(script.headers["Cache-Control"], "no-cache");
+
+  // A matching If-None-Match revalidates to a body-less 304 (ETag
+  // echoed verbatim, weak form accepted); images keep their lifetime.
+  const pageTag = page.headers.ETag;
+  const notModified = await serve(handler, `${ASSET_BASE}/dr-ext-widget.html`, {
+    "if-none-match": pageTag,
+  });
+  assert.equal(notModified.status, 304);
+  assert.equal(notModified.body, null);
+  const weak = await serve(handler, `${ASSET_BASE}/dr-ext-widget.html`, {
+    "if-none-match": `W/${pageTag}`,
+  });
+  assert.equal(weak.status, 304);
+  const changed = await serve(handler, `${ASSET_BASE}/dr-ext-widget.html`, {
+    "if-none-match": '"stale-etag"',
+  });
+  assert.equal(changed.status, 200);
+
+  const icon = await serve(handler, `${ASSET_BASE}/icon.png`);
+  if (!icon.fellThrough) {
+    assert.equal(icon.headers["Cache-Control"], "public, max-age=3600");
+  }
 });

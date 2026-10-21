@@ -126,12 +126,43 @@ function staticAssetHandler(root, assetBase) {
         next();
         return;
       }
-      res.statusCode = 200;
+      // Code assets must never be served stale: the manifest (fresh via
+      // the resources API) can promise features the cached iframe code
+      // behind it predates — a one-hour max-age once shipped a taller
+      // window around last week's JS. `no-cache` revalidates every
+      // load; the validators below make that a cheap 304 when nothing
+      // changed. Only rarely-changing binaries keep a lifetime.
+      const ext = path.extname(resolved);
+      const cacheable = ext === ".png" || ext === ".svg" || ext === ".ico";
+      const etag = `"${st.size}-${st.mtimeMs}"`;
+      const lastModified = st.mtime.toUTCString();
+      res.setHeader("ETag", etag);
+      res.setHeader("Last-Modified", lastModified);
       res.setHeader(
-        "Content-Type",
-        MIME[path.extname(resolved)] ?? "application/octet-stream",
+        "Cache-Control",
+        cacheable ? "public, max-age=3600" : "no-cache",
       );
-      res.setHeader("Cache-Control", "public, max-age=3600");
+      // Revalidation: a matching If-None-Match (any weak/strong
+      // comparison — browsers send the ETag back verbatim) or an
+      // If-Modified-Since no older than the file answers 304, body
+      // skipped.
+      const inm = req.headers?.["if-none-match"];
+      const ims = req.headers?.["if-modified-since"];
+      const imsTime = ims == null ? NaN : Date.parse(ims);
+      const notModified =
+        inm
+          ?.split(",")
+          .some((t) => t.trim() === etag || t.trim() === `W/${etag}`) ||
+        (inm == null &&
+          Number.isFinite(imsTime) &&
+          st.mtime.getTime() <= imsTime);
+      if (notModified) {
+        res.statusCode = 304;
+        res.end();
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
       fs.readFile(resolved, (readErr, data) => {
         if (readErr) {
           next();
