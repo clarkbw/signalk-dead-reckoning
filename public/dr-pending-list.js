@@ -73,6 +73,9 @@ template.innerHTML = /* html */ `
     }
     .actions { display: flex; gap: 0.5rem; flex: 0 0 auto; }
     .actions button { padding: 0 0.75rem; }
+    /* Armed two-tap delete (sandbox-safe confirm): red reads as the
+       destructive step it is about to take. */
+    .actions button.danger { --theme-color: var(--color-red); }
     .empty {
       font-size: 0.8rem;
       color: var(--text-muted);
@@ -101,11 +104,14 @@ template.innerHTML = /* html */ `
       margin-top: 0.5rem;
       font-family: ui-monospace, "Fira Code", monospace;
     }
+    /* Caution vs failure: red for things that failed, amber for things
+       the watchkeeper should keep in mind (the un-advanced note). */
+    .error.warn { color: var(--color-orange, #c77b28); }
+    .error.fail { color: var(--color-red, #c94b4b); }
   </style>
   <div class="rows" id="rows"></div>
   <p class="hint" id="partner-hint" hidden></p>
   <div class="footer">
-    <button id="preview-btn" class="primary" disabled>Preview selected</button>
     <button id="confirm-btn" disabled>Confirm fix</button>
     <span class="status" id="status"></span>
   </div>
@@ -128,11 +134,15 @@ class DrPendingList extends HTMLElement {
     this.rowsByKey = new Map();
 
     root
-      .querySelector("#preview-btn")
-      .addEventListener("click", () => this.preview());
-    root
       .querySelector("#confirm-btn")
       .addEventListener("click", () => this.confirm());
+
+    /** Debounce handle for the auto-preview (selection changes preview
+     * without a button — resolving is cheap, local and reversible; the
+     * deliberate step is confirming) and a sequence guard so a stale
+     * response cannot overwrite a newer candidate. */
+    this.previewTimer = null;
+    this.previewSeq = 0;
 
     /** @type {HTMLElement|null} */
     this.errorEl = root.querySelector("#error");
@@ -170,16 +180,7 @@ class DrPendingList extends HTMLElement {
       }
       if (this.candidate) {
         // A confirm/delete may have invalidated the candidate.
-        const ids = new Set(
-          (this.candidate.observationIds?.lopIds ?? []).map(
-            (id) => `lop:${id}`,
-          ),
-        );
-        for (const id of this.candidate.observationIds?.cplIds ?? []) {
-          ids.add(`cpl:${id}`);
-        }
-        const stillValid = [...ids].every((k) => this.selection.has(k));
-        if (!stillValid) this.clearCandidate();
+        this.invalidateCandidate();
       }
       this.render();
     } catch {
@@ -260,10 +261,33 @@ class DrPendingList extends HTMLElement {
     edit.title = "Edit this observation";
     edit.addEventListener("click", () => this.edit(row));
     actions.appendChild(edit);
+    // Two-tap delete: plotter-extension iframes are sandboxed without
+    // allow-modals, so native confirm dialogs are silently suppressed
+    // (a confirm-guarded delete would never fire) — the confirmation
+    // is the button itself: first tap arms (red "Sure?"), second tap
+    // deletes, and the arm state expires after a few seconds.
     const del = document.createElement("button");
     del.textContent = "Del";
     del.title = "Delete this observation";
-    del.addEventListener("click", () => this.remove(row));
+    let armed = false;
+    let disarmTimer = null;
+    const disarm = () => {
+      armed = false;
+      clearTimeout(disarmTimer);
+      del.textContent = "Del";
+      del.classList.remove("danger");
+    };
+    del.addEventListener("click", () => {
+      if (!armed) {
+        armed = true;
+        del.textContent = "Sure?";
+        del.classList.add("danger");
+        disarmTimer = setTimeout(disarm, 3000);
+        return;
+      }
+      disarm();
+      this.remove(row);
+    });
     actions.appendChild(del);
     div.appendChild(actions);
 
@@ -289,6 +313,48 @@ class DrPendingList extends HTMLElement {
       }),
     );
     this.render();
+    this.schedulePreview();
+  }
+
+  /**
+   * Schedules the debounced auto-preview after a selection change, and
+   * drops a candidate the change no longer covers (the auto-preview
+   * re-resolves what remains; the chart ring stays put when the
+   * selection still spans the candidate).
+   *
+   * @returns {void}
+   */
+  schedulePreview() {
+    this.invalidateCandidate();
+    clearTimeout(this.previewTimer);
+    if (this.selection.size === 0) {
+      this.previewTimer = null;
+      this.renderFooter();
+      return;
+    }
+    this.previewTimer = setTimeout(() => {
+      this.previewTimer = null;
+      this.preview();
+    }, 600);
+  }
+
+  /**
+   * Drops the previewed candidate when the selection no longer spans
+   * every observation it was resolved from.
+   *
+   * @returns {void}
+   */
+  invalidateCandidate() {
+    if (!this.candidate) return;
+    const ids = new Set(
+      (this.candidate.observationIds?.lopIds ?? []).map((id) => `lop:${id}`),
+    );
+    for (const id of this.candidate.observationIds?.cplIds ?? []) {
+      ids.add(`cpl:${id}`);
+    }
+    if (![...ids].every((k) => this.selection.has(k))) {
+      this.clearCandidate();
+    }
   }
 
   /** @returns {Array<{kind: string, id: number}>} */
@@ -302,21 +368,12 @@ class DrPendingList extends HTMLElement {
   /** @returns {void} */
   renderFooter() {
     const n = this.selection.size;
-    const previewBtn = this.shadowRoot.querySelector("#preview-btn");
     const confirmBtn = this.shadowRoot.querySelector("#confirm-btn");
     // One selected observation resolves as a running fix against the
-    // last confirmed fix; two or more resolve as an ordinary fix.
-    // The button label is the same action either way — preview —
-    // with the single-selection running-fix mode explained by the
-    // tooltip and named in the status line once the candidate is
-    // ready ("candidate ready · running fix").
-    previewBtn.disabled = n < 1;
-    previewBtn.textContent =
-      n > 0 ? `Preview selected (${n})` : "Preview selected";
-    previewBtn.title =
-      n === 1
-        ? "One observation resolves as a running fix against the last confirmed fix"
-        : "";
+    // last confirmed fix; two or more resolve as an ordinary fix —
+    // previewed automatically on every selection change, with the
+    // single-selection running-fix mode named in the status line once
+    // the candidate is ready ("candidate ready · running fix").
     confirmBtn.disabled = !this.candidate;
     const runTag = this.candidate?.derived_from_fix_id ? " · running fix" : "";
     this.statusEl.textContent = this.candidate
@@ -336,6 +393,7 @@ class DrPendingList extends HTMLElement {
     this.hideError();
     const selection = this.selectedRows();
     if (selection.length < 1) return;
+    const seq = ++this.previewSeq;
     try {
       const res = await fetch(`${API}/fix/resolve`, {
         method: "POST",
@@ -343,11 +401,23 @@ class DrPendingList extends HTMLElement {
         body: JSON.stringify(vm.resolvePreviewBody(selection)),
       });
       const data = await res.json();
+      // A newer selection superseded this request — its response is
+      // stale, don't let it overwrite the newer candidate.
+      if (seq !== this.previewSeq) return;
       if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
       this.candidate = data.candidate;
       if (vm.hasUnadvanced(this.candidate.advancements)) {
+        const cov = data.track_coverage;
+        const covers =
+          cov?.oldest_ms != null && cov?.newest_ms != null
+            ? ` The DR track covers ${vm.relativeTimeText(new Date(cov.oldest_ms).toISOString())} to ${vm.relativeTimeText(new Date(cov.newest_ms).toISOString())}.`
+            : "";
+        // A caution, not an alarm: the sights stand where they were
+        // taken; the watchkeeper just reads the candidate with that in
+        // mind (the honest-failure note, work doc #13).
         this.showError(
-          "⚠ one or more older observations could not be advanced (no DR track over the interval) — the candidate may be wrong",
+          `ℹ older sight(s) not moved along the DR track — the candidate plots them where they were taken.${covers} Double-check it before confirming.`,
+          "warn",
         );
       }
       this.renderFooter();
@@ -409,7 +479,6 @@ class DrPendingList extends HTMLElement {
    */
   async remove(row) {
     this.hideError();
-    if (!window.confirm(`Delete ${row.label}?`)) return;
     try {
       const res = await fetch(`${API}/fix/${row.kind}/${row.id}`, {
         method: "DELETE",
@@ -449,8 +518,9 @@ class DrPendingList extends HTMLElement {
    * @param {string} msg
    * @returns {void}
    */
-  showError(msg) {
+  showError(msg, severity = "fail") {
     this.errorEl.textContent = msg;
+    this.errorEl.className = `error ${severity}`;
     this.errorEl.hidden = false;
   }
 
