@@ -53,10 +53,22 @@ const MIME = {
 /**
  * Builds the extension manifest.
  *
- * `requires` lists only what the tile genuinely cannot run without: the
- * widget grid and the Signal K relay (a status tile with no data is dead
- * weight). Night mode is used when present and guarded with
- * `hasCapability` at runtime.
+ * `requires` lists only what the extension cannot run without *at
+ * all* — and stays at the Freeboard 3.0 surface so the status tile is
+ * offered everywhere: on a host without a later capability the
+ * contributions that need it are simply omitted (unknown sections
+ * ignored, unsupported overlay types dropped) while the rest keeps
+ * working. Concretely:
+ *
+ * - any host: `dr-status` widget
+ * - Freeboard ≥ 3.0/3.3: + Sight/Fix panel (window on 3.3, drawer
+ *   fallback earlier), toolbar buttons (override engage/release),
+ *   the chartwork background runtime
+ * - Freeboard ≥ 3.4: + `overlays.data` chartwork layer, context-menu
+ *   sight actions, map picks, interactive overlay features
+ *
+ * Everything the runtime can probe is in `optional`; the code guards
+ * each with `hasCapability`.
  *
  * @param {string} assetBase - server-relative URL prefix for assets
  * @param {string} version - plugin version for display metadata
@@ -66,11 +78,29 @@ function buildManifest(assetBase, version) {
   return {
     name: "Dead Reckoning",
     description:
-      "Dead reckoning status tile: GPS↔DR divergence, uncertainty radius and DR health at a glance.",
+      "Dead reckoning in the plotter: status tile, sight/LoP entry with fix resolution, chartwork overlay (tracks, LoPs, fixes, uncertainty) and DR override control.",
     version,
     apiVersion: "1",
-    requires: ["widgets", "signalk.stream"],
-    optional: ["nightMode"],
+    requires: [
+      "widgets",
+      "panels.iframe",
+      "signalk.stream",
+      "buttons",
+      "background.iframe",
+    ],
+    optional: [
+      "overlays.data",
+      "actions",
+      "actions.overlay",
+      "map",
+      "map.pick",
+      "windows",
+      "buttons.visibility",
+      "events.publish",
+      "nightMode",
+      "units",
+      "signalk.put",
+    ],
     widgets: [
       {
         id: "dr-status",
@@ -79,6 +109,304 @@ function buildManifest(assetBase, version) {
         url: `${assetBase}/dr-ext-widget.html`,
         size: "2x1",
         lifecycle: "whileEnabled",
+      },
+    ],
+    background: [
+      {
+        id: "chartwork",
+        title: "DR chartwork",
+        type: "iframe",
+        url: `${assetBase}/dr-ext-runtime.html`,
+      },
+    ],
+    panels: [
+      {
+        id: "sight",
+        title: "DR Sight / Fix",
+        type: "iframe",
+        url: `${assetBase}/dr-ext-panel.html`,
+        lifecycle: "keepAlive",
+      },
+      {
+        // The same page, pending-only: the split keeps sight entry and
+        // the observation worklist apart (review feedback) — this one
+        // only earns a toolbar button while observations are pending.
+        id: "pending",
+        title: "DR Pending observations",
+        type: "iframe",
+        url: `${assetBase}/dr-ext-panel.html?view=pending`,
+        lifecycle: "keepAlive",
+      },
+    ],
+    buttons: [
+      {
+        id: "open-sight",
+        title: "DR Sight / Fix",
+        slot: "mapToolbar",
+        icon: "explore",
+        action: {
+          type: "toggleWindow",
+          panel: "sight",
+          title: "DR Sight / Fix",
+          geometry: { anchor: "top-right", width: 400, height: "80%" },
+          single: true,
+          restoreKey: "sight",
+        },
+      },
+      {
+        id: "override-engage",
+        title: "Engage DR override",
+        slot: "mapToolbar",
+        icon: "swap_horizontal_circle",
+        visible: true,
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.override",
+          params: { active: true },
+          scope: "extension",
+        },
+      },
+      {
+        id: "override-release",
+        title: "Release DR override",
+        slot: "mapToolbar",
+        icon: "gps_off",
+        visible: false,
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.override",
+          params: { active: false },
+          scope: "extension",
+        },
+      },
+      {
+        id: "confirm-fix",
+        title: "Confirm DR fix",
+        slot: "mapToolbar",
+        icon: "where_to_vote",
+        visible: false,
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.confirm",
+          scope: "extension",
+        },
+      },
+      {
+        id: "open-pending",
+        title: "DR Pending observations",
+        slot: "mapToolbar",
+        icon: "fact_check",
+        visible: false,
+        action: {
+          type: "toggleWindow",
+          panel: "pending",
+          title: "DR Pending observations",
+          geometry: { anchor: "bottom-right", width: 380, height: "90%" },
+          restoreKey: "pending-v2",
+        },
+      },
+      {
+        // The bootstrap fix: confirm the GNSS position as a fix, which
+        // resets the DR origin (a months-old origin from a test server
+        // must not veto the first real fix). Shown while a GNSS
+        // position is available.
+        id: "confirm-gnss",
+        title: "Confirm GNSS fix",
+        slot: "mapToolbar",
+        icon: "my_location",
+        visible: false,
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.confirm-gnss",
+          scope: "extension",
+        },
+      },
+    ],
+    actions: [
+      {
+        id: "sight-bearing",
+        title: "Bearing sight of this",
+        icon: "explore",
+        targets: ["position", "chartFeature", "waypoint", "aton"],
+        action: {
+          type: "openWindow",
+          panel: "sight",
+          params: { mode: "bearing" },
+          geometry: { anchor: "top-right", width: 400, height: "90%" },
+          restoreKey: "sight-bearing",
+          single: true,
+        },
+      },
+      {
+        id: "sight-vertical",
+        title: "Vertical angle to this",
+        icon: "straighten",
+        targets: ["position", "chartFeature", "waypoint", "aton"],
+        action: {
+          type: "openWindow",
+          panel: "sight",
+          params: { mode: "vertical" },
+          geometry: { anchor: "top-right", width: 400, height: "90%" },
+          restoreKey: "sight-vertical",
+          single: true,
+        },
+      },
+      {
+        id: "sight-radar",
+        title: "Radar range to this",
+        icon: "radar",
+        targets: ["position", "chartFeature", "waypoint", "aton"],
+        action: {
+          type: "openWindow",
+          panel: "sight",
+          params: { mode: "radar" },
+          geometry: { anchor: "top-right", width: 400, height: "90%" },
+          restoreKey: "sight-radar",
+          single: true,
+        },
+      },
+      {
+        id: "sight-hangle",
+        title: "Horizontal angle to this",
+        icon: "architecture",
+        targets: ["position", "chartFeature", "waypoint", "aton"],
+        action: {
+          type: "openWindow",
+          panel: "sight",
+          params: { mode: "hangle" },
+          geometry: { anchor: "top-right", width: 400, height: "90%" },
+          restoreKey: "sight-hangle",
+          single: true,
+        },
+      },
+      {
+        id: "sight-edit",
+        title: "Edit this observation",
+        icon: "edit",
+        targets: [
+          {
+            kind: "overlayFeature",
+            overlays: ["chartwork"],
+            match: [{ path: "id", op: "regex", value: "^(lop|cpl):" }],
+          },
+        ],
+        action: {
+          type: "openWindow",
+          panel: "sight",
+          geometry: { anchor: "top-right", width: 400, height: "90%" },
+          single: true,
+          restoreKey: "sight",
+        },
+      },
+      {
+        // The chart-driven confirm: right-click / popover action on the
+        // candidate ring. (The ring's primary select opens the
+        // resolution window — see review-fix below.)
+        id: "confirm-fix",
+        title: "Confirm fix here",
+        icon: "where_to_vote",
+        targets: [
+          {
+            kind: "overlayFeature",
+            overlays: ["chartwork"],
+            match: [{ path: "id", op: "regex", value: "^candidate$" }],
+          },
+        ],
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.confirm",
+          scope: "extension",
+        },
+      },
+      {
+        // Clicking the candidate ring goes back to the fix resolution:
+        // the pending window is where the candidate's numbers and the
+        // confirm button live (work doc #38 review).
+        id: "review-fix",
+        title: "Review this fix",
+        icon: "fact_check",
+        default: true,
+        targets: [
+          {
+            kind: "overlayFeature",
+            overlays: ["chartwork"],
+            match: [{ path: "id", op: "regex", value: "^candidate$" }],
+          },
+        ],
+        action: {
+          type: "openWindow",
+          panel: "pending",
+          geometry: { anchor: "bottom-right", width: 380, height: "90%" },
+          single: true,
+          restoreKey: "pending-v2",
+        },
+      },
+      {
+        // Chart-driven one-observation resolve (running fix): offered
+        // only on unresolved observations; the runtime hides the whole
+        // action when no previous confirmed fix exists to advance from.
+        id: "resolve-from",
+        title: "Resolve fix from this",
+        icon: "gps_fixed",
+        targets: [
+          {
+            kind: "overlayFeature",
+            overlays: ["chartwork"],
+            match: [
+              { path: "id", op: "regex", value: "^(lop|cpl):" },
+              { path: "properties.used", op: "eq", value: false },
+              // Unresolved AND fresh — the runtime stamps stale on
+              // features past the pending list's 24 h rule; a
+              // month-old position line must not offer a month-long
+              // advance.
+              { path: "properties.stale", op: "eq", value: false },
+            ],
+          },
+        ],
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.resolve",
+          scope: "extension",
+        },
+      },
+      {
+        id: "delete-observation",
+        title: "Delete this observation",
+        icon: "delete",
+        targets: [
+          {
+            kind: "overlayFeature",
+            overlays: ["chartwork"],
+            match: [{ path: "id", op: "regex", value: "^(lop|cpl):" }],
+          },
+        ],
+        action: {
+          type: "publish",
+          topic: "signalk-dead-reckoning.delete",
+          scope: "extension",
+        },
+      },
+    ],
+    overlays: [
+      {
+        id: "chartwork",
+        title: "DR chartwork",
+        type: "data",
+        band: "aboveResources",
+        visible: true,
+        opacity: 1,
+        interactive: true,
+        interactiveLayers: [
+          "dr-lop",
+          "dr-lop-used",
+          "dr-cpl",
+          "dr-cpl-used",
+          "dr-fix",
+          "dr-candidate",
+          "dr-candidate-dot",
+        ],
+        titleProperty: "name",
+        style: `${assetBase}/dr-ext-overlay-style.json`,
       },
     ],
   };
