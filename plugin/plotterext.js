@@ -110,6 +110,14 @@ function buildManifest(assetBase, version) {
         size: "2x1",
         lifecycle: "whileEnabled",
       },
+      {
+        id: "current",
+        title: "Current set & drift",
+        type: "iframe",
+        url: `${assetBase}/dr-current-widget.html`,
+        size: "1x1",
+        lifecycle: "whileEnabled",
+      },
     ],
     background: [
       {
@@ -135,6 +143,14 @@ function buildManifest(assetBase, version) {
         title: "DR Pending observations",
         type: "iframe",
         url: `${assetBase}/dr-ext-panel.html?view=pending`,
+        lifecycle: "keepAlive",
+      },
+      {
+        // Current set & drift: the manual override (SPEC §6.2 tier 1).
+        id: "current",
+        title: "Current set & drift",
+        type: "iframe",
+        url: `${assetBase}/dr-ext-panel.html?view=current`,
         lifecycle: "keepAlive",
       },
     ],
@@ -203,6 +219,20 @@ function buildManifest(assetBase, version) {
           title: "DR Pending observations",
           geometry: { anchor: "bottom-right", width: 380, height: "90%" },
           restoreKey: "pending-v2",
+        },
+      },
+      {
+        id: "open-current",
+        title: "Current set & drift",
+        slot: "mapToolbar",
+        icon: "waves",
+        visible: true,
+        action: {
+          type: "toggleWindow",
+          panel: "current",
+          title: "Current set & drift",
+          geometry: { anchor: "bottom-left", width: 380, height: "50%" },
+          restoreKey: "current",
         },
       },
       {

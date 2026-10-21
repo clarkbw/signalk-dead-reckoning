@@ -29,6 +29,10 @@ template.innerHTML = /* html */ `
       --theme-color: var(--color-orange);
       --theme-color-rgb: var(--color-orange-rgb);
     }
+    /* Embedded mode (embedded attribute): the hosting window/panel
+       supplies the title and the close control (Freeboard window
+       decorations, work doc #38). */
+    :host([embedded]) h2 { display: none; }
     h2 { justify-content: space-between; }
     .active {
       margin: 0 0 0.75rem 0;

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<!-- Current set & drift widget (Freeboard-SK & Plotter Extensions API
+     v1 hosts). Loaded inside the host's sandboxed widget iframe; the
+     vector rides the bus, the tier/source enrichment polls REST. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Current set &amp; drift</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      dr-current-widget {
+        display: block;
+        height: 100%;
+      }
+    </style>
+    <script type="module" src="./dr-current-widget.js"></script>
+  </head>
+  <body>
+    <dr-current-widget></dr-current-widget>
+  </body>
+</html>

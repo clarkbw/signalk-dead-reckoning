@@ -626,7 +626,11 @@ test("manifest contribution references resolve", () => {
   const runtimeIds = new Set(manifest.background.map((b) => b.id));
   assert.ok(panelIds.has("sight"));
   assert.ok(panelIds.has("pending"));
+  assert.ok(panelIds.has("current"));
   assert.ok(runtimeIds.has("chartwork"));
+  const widgetIds = new Set(manifest.widgets.map((w) => w.id));
+  assert.ok(widgetIds.has("dr-status"));
+  assert.ok(widgetIds.has("current"));
 
   for (const btn of manifest.buttons) {
     if (btn.action.panel) {
@@ -657,6 +661,11 @@ test("manifest contribution references resolve", () => {
   // The split: pending is its own panel, mounted from the same page.
   const pendingPanel = manifest.panels.find((p) => p.id === "pending");
   assert.match(pendingPanel.url, /dr-ext-panel\.html\?view=pending$/);
+  // Current set & drift: own window button (always visible), own view.
+  const currentBtn = manifest.buttons.find((b) => b.id === "open-current");
+  assert.ok(currentBtn);
+  assert.equal(currentBtn.visible, true);
+  assert.equal(currentBtn.action.panel, "current");
 
   for (const action of manifest.actions) {
     if (action.action.type === "openWindow") {
@@ -848,6 +857,8 @@ test("panel and runtime pages exist and reference shipped modules", () => {
     "dr-ext-runtime.js",
     "dr-ext-chartwork.js",
     "dr-ext-overlay-style.json",
+    "dr-current-widget.html",
+    "dr-current-widget.js",
   ]) {
     assert.ok(fs.existsSync(path.join(publicDir, f)), f);
   }
@@ -878,6 +889,11 @@ test("panel and runtime pages exist and reference shipped modules", () => {
     "utf8",
   );
   assert.match(panelHtml, /body\.single \.optional/);
+  // The current view (`?view=current`): only the manual override panel.
+  assert.match(panelHtml, /body\.view-current #sight-section/);
+  assert.match(panelHtml, /dr-current-panel id="current" embedded/);
+  assert.match(panel, /view-current/);
+  assert.match(panel, /CURRENT_VIEW/);
   // The split: pending lives in its own ?view=pending mount, never in
   // the Sight/Fix window; the view hides sight + fixat + pick header.
   assert.match(panelHtml, /#pending-section/);

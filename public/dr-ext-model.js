@@ -82,3 +82,37 @@ export function widgetModel(v = {}) {
       v.uncertaintyRadius == null ? "—" : `± ${fmtNm(v.uncertaintyRadius)}`,
   };
 }
+
+/**
+ * Pure render-model for the current set & drift widget
+ * (`dr-current-widget`) — the resolved §6.2 current whatever source
+ * won, with the source named. Accent follows the hierarchy semantics:
+ * a manual override is alternate-power orange, anything else neutral.
+ *
+ * @param {object|null} current - the resolved vector from GET /status
+ *   (`{setTrue: deg true, drift: kn, source: string}`)
+ * @returns {{sourceLabel: string, vector: string, accent: string}}
+ */
+export function currentWidgetModel(current) {
+  const source = current?.source ?? "none";
+  const labels = {
+    manual: "Manual",
+    "weather-api": "Weather API",
+    "pilot-chart": "Pilot chart",
+    derived: "Derived",
+    none: "None",
+  };
+  const sourceLabel = labels[source] ?? source;
+  const vector =
+    Number.isFinite(current?.setTrue) && Number.isFinite(current?.drift)
+      ? `${current.drift.toFixed(1)} kn → ${String(
+          Math.round(current.setTrue) % 360,
+        ).padStart(3, "0")}°`
+      : "—";
+  return {
+    sourceLabel,
+    vector,
+    accent:
+      source === "manual" ? "orange" : source === "none" ? "muted" : "teal",
+  };
+}

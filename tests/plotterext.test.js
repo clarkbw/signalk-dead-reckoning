@@ -48,7 +48,7 @@ test("manifest requires the widget grid and the SK relay", () => {
 
 test("manifest contributes a valid 2x1 status widget", () => {
   const m = buildManifest(ASSET_BASE, "0.3.0");
-  assert.equal(m.widgets.length, 1);
+  assert.equal(m.widgets.length, 2); // the status tile + the current tile
   const [w] = m.widgets;
   assert.equal(w.id, "dr-status");
   assert.equal(w.type, "iframe");
@@ -56,6 +56,12 @@ test("manifest contributes a valid 2x1 status widget", () => {
   assert.ok(["1x1", "2x1", "1x2", "2x2"].includes(w.size));
   assert.equal(w.lifecycle, "whileEnabled");
   assert.ok(w.url.startsWith(`${ASSET_BASE}/`));
+  // The current tile: 1×1, same lifecycle, same asset mount.
+  const [c] = m.widgets.slice(1);
+  assert.equal(c.id, "current");
+  assert.equal(c.size, "1x1");
+  assert.equal(c.lifecycle, "whileEnabled");
+  assert.ok(c.url.startsWith(`${ASSET_BASE}/`));
 });
 
 test("widget asset entry page and its imports exist on disk", () => {

@@ -94,3 +94,44 @@ test("widgetModel flags OVERRIDE engagement", async () => {
   const { widgetModel } = await loadModel();
   assert.equal(widgetModel({ active: true }).override, true);
 });
+
+test("currentWidgetModel names the winning source and the vector", async () => {
+  const { currentWidgetModel } = await loadModel();
+  // Manual override: alternate-power accent.
+  assert.deepEqual(
+    currentWidgetModel({ setTrue: 245.4, drift: 1.2, source: "manual" }),
+    {
+      sourceLabel: "Manual",
+      vector: "1.2 kn → 245°",
+      accent: "orange",
+    },
+  );
+  // The hierarchy's losers keep their names, neutral accents.
+  assert.equal(
+    currentWidgetModel({ setTrue: 100, drift: 0.4, source: "weather-api" })
+      .sourceLabel,
+    "Weather API",
+  );
+  assert.equal(
+    currentWidgetModel({ setTrue: 100, drift: 0.4, source: "pilot-chart" })
+      .accent,
+    "teal",
+  );
+  assert.equal(
+    currentWidgetModel({ setTrue: 100, drift: 0.4, source: "derived" })
+      .sourceLabel,
+    "Derived",
+  );
+  // No current at all.
+  assert.deepEqual(currentWidgetModel(null), {
+    sourceLabel: "None",
+    vector: "—",
+    accent: "muted",
+  });
+  // Unknown sources pass through (forward compatibility).
+  assert.equal(
+    currentWidgetModel({ setTrue: 10, drift: 0.1, source: "tidal-model" })
+      .sourceLabel,
+    "tidal-model",
+  );
+});

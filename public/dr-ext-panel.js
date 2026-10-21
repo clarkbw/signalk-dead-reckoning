@@ -30,6 +30,7 @@ import { connectExtension } from "./vendor/plotterext-bus/extension.js";
 import "./dr-pending-list.js";
 import "./dr-sight-panel.js";
 import "./dr-fix-panel.js";
+import "./dr-current-panel.js";
 
 const API = "/plugins/signalk-dead-reckoning";
 const CONFIG_PATH = "/signalk/v2/api/signalk-dead-reckoning/configuration";
@@ -51,6 +52,7 @@ let client = null;
 let sight = null;
 let pending = null;
 let fixat = null;
+let current = null;
 let drSeen = false;
 const gnss = {};
 
@@ -58,8 +60,10 @@ const gnss = {};
  * toolbar button, own panel id) — no sight forms live here. */
 const PENDING_VIEW =
   new URLSearchParams(window.location.search).get("view") === "pending";
-
-const els = {};
+/** The `?view=current` mount: the Current set & drift window (manual
+ * override, SPEC §6.2 tier 1) — no sight forms live here either. */
+const CURRENT_VIEW =
+  new URLSearchParams(window.location.search).get("view") === "current";
 
 function $(id) {
   return document.getElementById(id);
@@ -96,6 +100,7 @@ async function observationsChanged() {
 /** Pins the panel to one sight method (chart-object actions): only
  * that form renders — no pending list, no fix-at section. */
 function applyMode(mode) {
+  if (PENDING_VIEW || CURRENT_VIEW) return;
   document.body.classList.toggle("single", mode != null);
   if (mode != null) sight.setAttribute("single-tab", mode);
   else sight.removeAttribute("single-tab");
@@ -127,7 +132,7 @@ function seedTarget(target, mode, prefix = null) {
  * Never in the pending view — sight invocations broadcast to every
  * context of the extension, and this window has no sight forms. */
 async function handleInvocation(invocation) {
-  if (PENDING_VIEW) return;
+  if (PENDING_VIEW || CURRENT_VIEW) return;
   const { actionId, target } = invocation ?? {};
   if (!actionId || !target) return;
   if (actionId === "sight-edit") {
@@ -319,8 +324,17 @@ async function start() {
   pending = $("pending");
   sight = $("sight");
   fixat = $("fixat");
+  current = $("current");
 
   if (PENDING_VIEW) document.body.classList.add("view-pending");
+  if (CURRENT_VIEW) {
+    document.body.classList.add("view-current");
+    // The component self-loads on refresh(); dr-close after a set/clear
+    // closes the window, matching the webapp's dialog flow.
+    current.refresh();
+    current.addEventListener("dr-current-changed", () => current.refresh());
+    current.addEventListener("dr-close", closeSelf);
+  }
 
   wireComponents();
   wireSeeding();

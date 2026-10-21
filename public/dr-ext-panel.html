@@ -67,6 +67,19 @@
       body.view-pending #pending-section {
         display: block;
       }
+      /* Current set & drift view (`?view=current`): only the manual
+         override panel (SPEC §6.2 tier 1) — no sight forms here. */
+      #current-section {
+        display: none;
+      }
+      body.view-current #sight-section,
+      body.view-current #fixat-section,
+      body.view-current #sight-hr {
+        display: none;
+      }
+      body.view-current #current-section {
+        display: block;
+      }
       /* Honest failure surface for the runtime's chart-driven actions
          (a running fix without a previous fix, a rejected delete) —
          visible in both views, auto-clearing. */
@@ -121,6 +134,10 @@
         <summary>FIX AT COORDINATES</summary>
         <dr-fix-panel id="fixat" embedded></dr-fix-panel>
       </details>
+      <section id="current-section">
+        <h2 class="optional">CURRENT SET &amp; DRIFT</h2>
+        <dr-current-panel id="current" embedded></dr-current-panel>
+      </section>
     </main>
   </body>
 </html>
