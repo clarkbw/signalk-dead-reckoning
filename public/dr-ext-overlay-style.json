@@ -1,0 +1,215 @@
+{
+  "version": 8,
+  "sources": {
+    "dr": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": []
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "dr-ghost-casing",
+      "type": "line",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "ghost"],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#080a0c",
+        "line-width": 5.5
+      }
+    },
+    {
+      "id": "dr-ghost",
+      "type": "line",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "lop"],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#4b8b99",
+        "line-width": 3.5
+      }
+    },
+    {
+      "id": "dr-uncertainty-fill",
+      "type": "fill",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "uncertainty"],
+      "paint": {
+        "fill-color": "#888899",
+        "fill-opacity": 0.1
+      }
+    },
+    {
+      "id": "dr-uncertainty-line",
+      "type": "line",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "uncertainty"],
+      "paint": {
+        "line-color": "#888899",
+        "line-width": 1,
+        "line-dasharray": [2, 2]
+      }
+    },
+    {
+      "id": "dr-snap",
+      "type": "line",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "snap"],
+      "paint": {
+        "line-color": "#888899",
+        "line-width": 2,
+        "line-dasharray": [2, 2]
+      }
+    },
+    {
+      "id": "dr-cpl",
+      "type": "line",
+      "source": "dr",
+      "filter": [
+        "all",
+        ["==", ["get", "kind"], "cpl"],
+        ["!=", ["get", "used"], true]
+      ],
+      "paint": {
+        "line-color": "#4b8b99",
+        "line-width": 2,
+        "line-dasharray": [4, 3]
+      }
+    },
+    {
+      "id": "dr-cpl-used",
+      "type": "line",
+      "source": "dr",
+      "filter": [
+        "all",
+        ["==", ["get", "kind"], "cpl"],
+        ["==", ["get", "used"], true]
+      ],
+      "paint": {
+        "line-color": "#2a525c",
+        "line-width": 2,
+        "line-dasharray": [4, 3]
+      }
+    },
+    {
+      "id": "dr-lop",
+      "type": "line",
+      "source": "dr",
+      "filter": [
+        "all",
+        ["==", ["get", "kind"], "lop"],
+        ["!=", ["get", "used"], true]
+      ],
+      "paint": {
+        "line-color": "#c77b28",
+        "line-width": 2
+      }
+    },
+    {
+      "id": "dr-lop-used",
+      "type": "line",
+      "source": "dr",
+      "filter": [
+        "all",
+        ["==", ["get", "kind"], "lop"],
+        ["==", ["get", "used"], true]
+      ],
+      "paint": {
+        "line-color": "#7a4f1b",
+        "line-width": 2
+      }
+    },
+    {
+      "id": "dr-candidate",
+      "type": "circle",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "candidate"],
+      "paint": {
+        "circle-radius": 12,
+        "circle-color": "rgba(201,75,75,0.06)",
+        "circle-stroke-color": "#c94b4b",
+        "circle-stroke-width": 3
+      }
+    },
+    {
+      "id": "dr-candidate-dot",
+      "type": "circle",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "candidate"],
+      "paint": {
+        "circle-radius": 3,
+        "circle-color": "#c94b4b"
+      }
+    },
+    {
+      "id": "dr-fix",
+      "type": "circle",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "fix"],
+      "paint": {
+        "circle-radius": 5,
+        "circle-color": ["get", "color"],
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 1
+      }
+    },
+    {
+      "id": "dr-pos",
+      "type": "circle",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "drpos"],
+      "paint": {
+        "circle-radius": 5,
+        "circle-color": "#ffffff",
+        "circle-stroke-color": "#080a0c",
+        "circle-stroke-width": 2
+      }
+    },
+    {
+      "id": "dr-labels",
+      "type": "symbol",
+      "source": "dr",
+      "filter": ["all", ["has", "label"], ["!=", ["get", "kind"], "error"]],
+      "layout": {
+        "text-field": ["get", "label"],
+        "text-size": 10,
+        "text-anchor": "top",
+        "text-offset": [0, 0.6],
+        "text-justify": "center"
+      },
+      "paint": {
+        "text-color": "#e8e8ee",
+        "text-halo-color": "#080a0c",
+        "text-halo-width": 1.2
+      }
+    },
+    {
+      "id": "dr-error",
+      "type": "symbol",
+      "source": "dr",
+      "filter": ["==", ["get", "kind"], "error"],
+      "layout": {
+        "text-field": ["get", "label"],
+        "text-size": 11,
+        "text-anchor": "top",
+        "text-offset": [0, 0.4],
+        "text-justify": "center",
+        "text-allow-overlap": true
+      },
+      "paint": {
+        "text-color": "#ff5e5e",
+        "text-halo-color": "#080a0c",
+        "text-halo-width": 1.2
+      }
+    }
+  ]
+}

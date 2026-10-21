@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DR Sight / Fix</title>
+    <style>
+      /* The iframe renders over the host's chart: the panel carries its
+         own dark surface (the same palette dr-ext-widget uses) so it
+         neither blinds a night bridge nor shows the chart through. */
+      html,
+      body {
+        margin: 0;
+        background: #111414;
+        color: #fff;
+        font-family: ui-monospace, "Fira Code", monospace;
+      }
+      /* The webapp's theme tokens (styles.css :root) — the components'
+         shared THEME_CSS references them: without them a primary
+         button's --color-teal resolves to nothing and it renders as
+         bare white text that inverts to black-on-transparent on
+         hover. --theme-color seeds the components that don't set it
+         themselves (the sight panel's tab strip). */
+      :root {
+        color-scheme: dark;
+        --bg-base: #080a0c;
+        --bg-panel: #111414;
+        --bg-panel-muted: #0a0c0c;
+        --color-green: #6b9e78;
+        --color-green-rgb: 107, 158, 120;
+        --color-teal: #4b8b99;
+        --color-teal-rgb: 75, 139, 153;
+        --color-orange: #c77b28;
+        --color-orange-rgb: 199, 123, 40;
+        --color-red: #c94b4b;
+        --color-red-rgb: 201, 75, 75;
+        --color-grey: #444444;
+        --color-grey-rgb: 68, 68, 68;
+        --text-main: #ffffff;
+        --text-muted: #888899;
+        --theme-color: var(--color-teal);
+        --theme-color-rgb: var(--color-teal-rgb);
+      }
+      #pick-status {
+        font-size: 0.7rem;
+        color: #c77b28;
+        min-height: 1em;
+      }
+      /* Single-form mode (chart-object sight actions, work doc #38):
+         only the one sight form renders — no pending list, no fix-at
+         section, no chrome beyond the pick affordance. */
+      body.single .optional {
+        display: none;
+      }
+      /* View split: the Sight/Fix window never carries the pending
+         list — it lives in its own window (`?view=pending`), whose
+         button only appears while observations are pending. */
+      #pending-section,
+      #pending-hr {
+        display: none;
+      }
+      body.view-pending #sight-section,
+      body.view-pending #fixat-section,
+      body.view-pending #sight-hr {
+        display: none;
+      }
+      body.view-pending #pending-section {
+        display: block;
+      }
+      /* Honest failure surface for the runtime's chart-driven actions
+         (a running fix without a previous fix, a rejected delete) —
+         visible in both views, auto-clearing. */
+      #ext-error {
+        margin: 0.5rem 0.75rem 0;
+        padding: 0.5rem;
+        font-size: 0.75rem;
+        color: var(--color-red, #c94b4b);
+        border: 1px solid var(--color-red, #c94b4b);
+        white-space: pre-wrap;
+      }
+      #ext-error[hidden] {
+        display: none;
+      }
+      main {
+        display: block;
+        padding-bottom: 2rem;
+      }
+      section > h2,
+      details > summary {
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        color: #4b8b99;
+        margin: 0;
+        padding: 0.5rem 0.75rem 0.25rem;
+      }
+      details > summary {
+        cursor: pointer;
+      }
+      hr {
+        border: 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        margin: 0.75rem 0 0;
+      }
+    </style>
+    <script type="module" src="./dr-ext-panel.js"></script>
+  </head>
+  <body>
+    <div id="ext-error" hidden role="alert"></div>
+    <main>
+      <section id="pending-section">
+        <h2>PENDING OBSERVATIONS</h2>
+        <dr-pending-list id="pending"></dr-pending-list>
+      </section>
+      <hr id="pending-hr" />
+      <section id="sight-section">
+        <h2 class="optional">SIGHT / LOP ENTRY</h2>
+        <dr-sight-panel id="sight" embedded pick></dr-sight-panel>
+      </section>
+      <hr id="sight-hr" class="optional" />
+      <details id="fixat-section" class="optional">
+        <summary>FIX AT COORDINATES</summary>
+        <dr-fix-panel id="fixat" embedded></dr-fix-panel>
+      </details>
+    </main>
+  </body>
+</html>
