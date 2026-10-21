@@ -1,6 +1,6 @@
 # Signal K Dead Reckoning
 
-An offline-first dead reckoning and sensor fusion engine for Signal K that maintains a continuously computed "shadow boat" position from water-track sensors (speed through water, compass heading, and learned leeway and current corrections), so you always have a navigational fallback when GPS becomes unreliable — whether from jamming, spoofing, or plain receiver failure. While GPS is trusted, the engine learns vessel-specific calibration corrections against ground truth and watches for GPS anomalies; when it isn't, the same learned model keeps the dead-reckoned position, its uncertainty polygon, and a water-track log going. Fixes from celestial sights, compass bearings, radar ranges, vertical angles, and horizontal sextant angles are entered through a unified pipeline and can snap dead reckoning back on track, with optional write-through to the vessel's logbook (any Signal K `logentries` resource provider, such as `signalk-logbook`).
+An offline-first dead reckoning and sensor fusion engine for Signal K that maintains a continuously computed "shadow boat" position from water-track sensors (speed through water, compass heading, and learned leeway and current corrections), so you always have a navigational fallback when GPS becomes unreliable — whether from jamming, spoofing, or plain receiver failure. While GPS is trusted, the engine learns vessel-specific calibration corrections against ground truth and watches for GPS anomalies; when it isn't, the same learned model keeps the dead-reckoned position, its uncertainty polygon, and a water-track log going. Fixes from celestial sights, compass bearings, radar ranges, vertical angles, and horizontal sextant angles are entered through a unified pipeline and can snap dead reckoning back on track, with optional write-through to the vessel's logbook (any Signal K `logentries` resource provider, such as `signalk-logbook`). The whole toolset — sight entry, fix resolution, chartwork, override control — also runs inside [Freeboard-SK](https://github.com/SignalK/freeboard-sk) as a plotter extension, so you can work without leaving the plotter.
 
 **Note:** This is just a toy. Make your own navigation calculations and decisions.
 
@@ -31,9 +31,20 @@ Planning for life without GPS is no longer hypothetical: the UK Maritime and Coa
 
 ## Daily use
 
-Open the webapp from your Signal K server's *Web apps* menu. It shows the vessel and the shadow boat on the chart, GPS↔DR divergence, the uncertainty polygon, and the water-track log. A status tile is also available for Freeboard-SK ≥ 3.0.
+Open the webapp from your Signal K server's *Web apps* menu. It shows the vessel and the shadow boat on the chart, GPS↔DR divergence, the uncertainty polygon, and the water-track log. The same tools are available inside Freeboard-SK — see *In Freeboard-SK* below.
 
-**Entering fixes.** Open *⊕ Sight / LOP* and pick the method:
+### In Freeboard-SK
+
+With this plugin installed and enabled, [Freeboard-SK](https://github.com/SignalK/freeboard-sk) discovers it as a plotter extension — no extra configuration. What you get depends on the Freeboard version:
+
+* **any version** — the shadow boat itself: enable *Show the DR shadow boat on chart plotters* in the plugin configuration and the DR position is published as a synthetic vessel (labelled *DR Shadow* by default), so the plotter renders it alongside your own vessel with a projected COG line — on Freeboard-SK it shows as a green buddy target
+* **≥ 3.0** — a *Dead Reckoning* status tile for the widget grid: GPS↔DR divergence, uncertainty radius and DR health at a glance (place it by pressing and holding an empty widget spot)
+* **≥ 3.3** — a *DR Sight / Fix* floating window with the full sight entry, pending-observations list and fix resolution, opened from a toolbar button (or a drawer on small screens), plus *Engage/Release DR override* toolbar buttons that follow the engine state
+* **≥ 3.4** — the *DR chartwork* map layer, drawn by Freeboard itself above routes and waypoints but never covering your own vessel, AIS targets or alarms: the DR ghost track, uncertainty circle, lines and circles of position, confirmed fixes, snap-to-fix vectors and the live DR position. It can be shown, hidden and faded in the chart list's *Plugin layers*, follows night mode, and comes with chart-driven sight entry — right-click a charted object for *Bearing sight of this*, *Radar range to this* and friends (coordinates and the object's charted name pre-filled), and right-click an unresolved position line to edit it
+
+The standalone webapp stays unchanged — both front ends read the same engine and can be used side by side.
+
+**Entering fixes.** Open *⊕ Sight / LOP* in the webapp, or the *DR Sight / Fix* window in Freeboard, and pick the method:
 
 * **Bearing** — bearing to a known object (lighthouse, tower) gives a line of position; the instrument selector records whether it came from a hand-bearing compass or the radar
 * **Vert. Angle** — vertical angle to a known object of known height gives a circular position line
